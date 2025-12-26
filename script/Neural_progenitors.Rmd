@@ -1,0 +1,1355 @@
+---
+title: "Neural"
+author: "Thomas Gagnieu"
+date: "2025-11-27"
+output: html_document
+---
+
+# Packages
+```{r, message=FALSE, warning=FALSE}
+suppressMessages({ 
+  library(Seurat)
+  library(SeuratDisk)
+  library(SingleCellExperiment)
+  library(dplyr)
+  library(stringr)
+  library(ggplot2)
+  library(patchwork)
+  library(ggrepel)
+  library(Matrix)
+  library(ggpubr)
+  library(org.Hs.eg.db)
+  library(clusterProfiler)
+  library(tidyr)
+  library(msigdbr)
+  library(forcats)
+  library(ggplot2)
+  library(readr)
+  library(tibble)
+  library(tidyverse)
+  library(slingshot)
+
+
+
+  colfuncNeuro <- colorRampPalette(c("#FAE5C1","#E65C00"))
+  N <- "#db765e"
+  D <- "#676767"
+})
+```
+
+
+# Load data
+```{r}
+Neural <- readRDS("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/rds_files/Neural_progenitor_cells.rds")
+DefaultAssay(Neural) <- "RNA"
+head(Neural@meta.data, 20)
+ncol(Neural)
+table(Neural$Condition)
+```
+
+# GLOBAL OVERVIEW
+## Research of the optimal dimensions (tSNE)
+```{r}
+## Research of the optimal dimensions (UMAP)
+
+# Elbow plot
+elbow <- ElbowPlot(Neural, ndims = 50)
+
+# Boucle de test des dimensions
+dim <- 10
+l <- dim - 5
+h <- dim + 5
+
+plots <- lapply(l:h, FUN = function(d) {
+  message("→ Dimension: ", d)
+
+  tmp <- Neural
+  tmp <- NormalizeData(tmp, verbose = FALSE)
+  tmp <- FindVariableFeatures(tmp, verbose = FALSE)
+  tmp <- ScaleData(tmp, verbose = FALSE)
+  tmp <- RunPCA(tmp, features = VariableFeatures(tmp), verbose = FALSE)
+  tmp <- FindNeighbors(tmp, dims = 1:d, verbose = FALSE)
+  tmp <- FindClusters(tmp, resolution = 0.7, verbose = FALSE)
+  tmp <- RunUMAP(tmp, dims = 1:d, verbose = FALSE)
+
+  DimPlot(tmp, reduction = "umap", label = TRUE, pt.size = 0.5) +
+    ggtitle(paste0("Clustering avec ", d, " dimensions (UMAP)")) +
+    NoLegend()
+})
+
+# Combine les plots
+plot <- wrap_plots(plots, ncol = 3)
+plot
+
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/research_dimension_umap.png", plot = plot, width = 15, height = 10, dpi = 300)
+
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/research_dimension_elbow.png", plot = elbow, width = 15, height = 10, dpi = 300)
+```
+
+
+## Chose resolutions for clustering (UMAP)
+```{r}
+# Vérifie qu’on a bien le PCA
+if (!"pca" %in% names(Neural@reductions)) {
+  Neural <- RunPCA(Neural, features = VariableFeatures(Neural))
+}
+
+resolutions <- seq(0.3, 1.0, by = 0.1)
+
+plots_umap <- list()
+
+for (res in resolutions) {
+  message("→ Clustering avec résolution = ", res)
+
+  tmp <- FindNeighbors(Neural, dims = 1:10, verbose = FALSE)
+  tmp <- FindClusters(tmp, resolution = res, verbose = FALSE)
+  tmp <- RunUMAP(tmp, dims = 1:10, verbose = FALSE)
+
+  umap_df <- as.data.frame(Embeddings(tmp, "umap"))
+  colnames(umap_df) <- c("UMAP_1", "UMAP_2")
+  umap_df$cluster <- Idents(tmp)
+
+  n_clusters <- length(unique(umap_df$cluster))
+
+  # Centroides si >1 cluster
+  if (n_clusters > 1) {
+    centroids <- umap_df %>%
+      group_by(cluster) %>%
+      summarise(
+        UMAP_1 = mean(UMAP_1),
+        UMAP_2 = mean(UMAP_2)
+      )
+
+    label_layer <- geom_text_repel(
+      data = centroids,
+      aes(label = cluster),
+      color = "black",
+      size = 4,
+      fontface = "bold",
+      box.padding = 0.5
+    )
+  } else {
+    label_layer <- NULL
+  }
+
+  p <- ggplot(umap_df, aes(x = UMAP_1, y = UMAP_2, color = cluster)) +
+    geom_point(size = 0.4, alpha = 0.8) +
+    label_layer +
+    ggtitle(paste0("UMAP – Résolution = ", res, " (", n_clusters, " clusters)")) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 12, face = "bold"),
+      legend.position = "none"
+    ) +
+    coord_equal()
+
+  plots_umap[[as.character(res)]] <- p
+}
+
+plot_umap_res <- wrap_plots(plots_umap, ncol = 3)
+plot_umap_res
+
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/research_resolution_UMAP_labels.png", plot = plot_umap_res, width = 15, height = 10, dpi = 300)
+```
+
+
+## Clustering at res=0.4
+```{r}
+dims_to_use <- 10
+resolutions <- c(0.4, 0.7)
+plot_path <- "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/"
+
+
+Neural <- FindNeighbors(Neural, dims = 1:dims_to_use, verbose = FALSE)
+Neural <- FindClusters(Neural, resolution = 0.4, verbose = FALSE)
+
+# Ajouter dans meta.data
+Neural$RNA_snn_res.0.4 <- Idents(Neural)
+Neural$cluster <- Neural$RNA_snn_res.0.4  # pour l’analyse à résolution 0.4
+
+Idents(Neural) <- "cluster"
+head(Neural@meta.data, 20)
+
+# DimPlot avec palette
+p_res04 <- DimPlot(
+  Neural,
+  reduction = "umap",
+  group.by = "RNA_snn_res.0.4",
+  pt.size = 1,
+  label = TRUE,
+  cols = colfuncNeuro(6)
+)
+p_res04_noLegend <- p_res04 + NoLegend()
+p_res04_noLegend
+
+#ggsave(filename = paste0(plot_path, "Neural_Clustering_resol04_WithLegend.png"), plot = p_res04, dpi = 300, width = 8, height = 6)
+#ggsave(filename = paste0(plot_path, "Neural_Clustering_resol04_NoLegend.png"), plot = p_res04_noLegend, dpi = 300, width = 8, height = 6)
+```
+
+
+## Clustering at res=0.7
+```{r}
+dims_to_use <- 10
+resolutions <- c(0.4, 0.7)
+plot_path <- "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/"
+
+Neural <- FindNeighbors(Neural, dims = 1:dims_to_use, verbose = FALSE)
+Neural <- FindClusters(Neural, resolution = 0.7, verbose = FALSE)
+
+# Ajouter dans meta.data
+Neural$RNA_snn_res.0.7 <- Idents(Neural)
+Neural$cluster <- Neural$RNA_snn_res.0.7  # alias temporaire
+Idents(Neural) <- "cluster"
+#saveRDS(Neural,"C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/rds_files/Neural_progenitor_cells.rds")
+
+
+# DimPlot avec palette
+p_res07 <- DimPlot(
+  Neural,
+  reduction = "umap",
+  group.by = "RNA_snn_res.0.7",
+  pt.size = 1,
+  label = TRUE,
+  cols = colfuncNeuro(10)
+)
+p_res07_noLegend <- p_res07 + NoLegend()
+
+ggsave(filename = paste0(plot_path, "Neural_Clustering_resol07_WithLegend.png"), plot = p_res07, dpi = 300, width = 8, height = 6)
+ggsave(filename = paste0(plot_path, "Neural_Clustering_resol07_NoLegend.png"), plot = p_res07_noLegend, dpi = 300, width = 8, height = 6)
+```
+
+
+## Clustering at res=0.8 (just in case)
+```{r}
+dims_to_use <- 10
+resolutions <- c(0.4, 0.7, 0.8)
+plot_path <- "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/"
+
+Neural <- FindNeighbors(Neural, dims = 1:dims_to_use, verbose = FALSE)
+Neural <- FindClusters(Neural, resolution = 0.8, verbose = FALSE)
+
+# Ajouter dans meta.data
+Neural$RNA_snn_res.0.8 <- Idents(Neural)
+Neural$cluster <- Neural$RNA_snn_res.0.8  # alias temporaire
+Idents(Neural) <- "cluster"
+
+# DimPlot avec palette
+p_res08 <- DimPlot(
+  Neural,
+  reduction = "umap",
+  group.by = "RNA_snn_res.0.8",
+  pt.size = 1,
+  label = TRUE,
+  cols = colfuncNeuro(10)
+)
+p_res08_noLegend <- p_res08 + NoLegend()
+
+#ggsave(filename = paste0(plot_path, "Neural_Clustering_resol08_WithLegend.png"), plot = p_res08, dpi = 300, width = 8, height = 6)
+#ggsave(filename = paste0(plot_path, "Neural_Clustering_resol08_NoLegend.png"), plot = p_res08_noLegend, dpi = 300, width = 8, height = 6)
+```
+
+
+## Clustering per Condition
+```{r}
+cols_cond <- c("N" = N, "D" = D)
+
+p_cond <- DimPlot(
+  Neural,
+  reduction = "umap",
+  group.by = "Condition",
+  pt.size = 1,
+  label = TRUE,
+  cols = cols_cond
+)
+p_cond_noLegend <- DimPlot(
+  Neural,
+  reduction = "umap",
+  group.by = "Condition",
+  pt.size = 1,
+  label = FALSE,
+  order = FALSE,
+  cols = cols_cond
+) + NoLegend()
+
+#ggsave(filename = paste0(plot_path, "Neural_Condition_WithLegend.png"), plot = p_cond, dpi = 300, width = 8, height = 6)
+#ggsave(filename = paste0(plot_path, "Neural_Condition_NoLegend.png"), plot = p_cond_noLegend, dpi = 300, width = 8, height = 6)
+
+
+### For inddividual condition highlighting ###
+# Coordonnées UMAP
+umap_df <- as.data.frame(Embeddings(Neural, "umap"))
+umap_df$condition <- Neural$Condition
+
+
+# Plot de base : toutes les cellules en gris clair 
+base_plot <- ggplot(umap_df, aes(x = UMAP_1, y = UMAP_2)) +
+  geom_point(color = "lightgrey", size = 1.1, alpha = 0.6) +
+  theme_minimal() +
+  coord_equal()
+
+
+# UMAP D : D en noir
+p_D <- base_plot +
+  geom_point(data = subset(umap_df, condition == "D"),
+             aes(x = UMAP_1, y = UMAP_2),
+             color = D, size = 1.1, alpha = 1) +
+  ggtitle("UMAP – cellules D (contrôle) en noir")
+p_D
+
+
+# UMAP N : N en rouge
+p_N <- base_plot +
+  geom_point(data = subset(umap_df, condition == "N"),
+             aes(x = UMAP_1, y = UMAP_2),
+             color = N, size = 1.1, alpha = 1) +
+  ggtitle("UMAP – cellules N (nicotine) en noir")
+p_N
+
+# barplot
+barplot_cond <- ggplot(umap_df, aes(x = condition, fill = condition)) +
+  geom_bar() +
+  scale_fill_manual(values = cols_cond) +
+  labs(title = "Nombre de cellules par condition",
+       x = "Condition",
+       y = "Nombre de cellules") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+barplot_cond
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/Barplot_condition.png", plot = barplot_cond, width = 15, height = 10, dpi = 300)
+
+
+# barplot : proporion of Condition per clusters
+barplot_cluster_cond <- ggplot(umap_df, aes(x = factor(Neural$RNA_snn_res.0.4), fill = condition)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = cols_cond) +
+  labs(title = "Proportion de chaque condition par cluster (résolution 0.4)",
+       x = "Cluster",
+       y = "Proportion") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+barplot_cluster_cond
+#ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/Barplot_cluster_condition.png", plot = barplot_cluster_cond, width = 15, height = 10, dpi = 300)
+```
+
+
+
+## G2M score visualization
+```{r}
+# Import des gènes de cycle (Seurat possède déjà la liste humaine)
+cc.genes <- Seurat::cc.genes.updated.2019
+
+
+# Vérification des gènes présents dans ton dataset
+s.genes.present <- cc.genes$s.genes[cc.genes$s.genes %in% rownames(Neural)]
+g2m.genes.present <- cc.genes$g2m.genes[cc.genes$g2m.genes %in% rownames(Neural)]
+
+
+# Scoring des phases cellulaires
+Neural <- CellCycleScoring(
+  Neural,
+  s.features = s.genes.present,
+  g2m.features = g2m.genes.present,
+  set.ident = TRUE
+)
+
+
+# UMAP colorée selon la phase
+umap_cycle <- DimPlot(
+  Neural,
+  reduction = "umap",
+  group.by = "Phase",
+  pt.size = 1
+) +
+  scale_color_manual(values = c("G1" = "#1E3A8A", "S" = "#10B981", "G2M" = "#FBBF24")) +
+  labs(title = "UMAP - Cycle cellulaire (G1/S/G2M)") +
+  theme_classic(base_size = 14) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+umap_cycle
+
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/G2M_score.png", plot = umap_cycle, width = 15, height = 10, dpi = 300)
+```
+
+
+## DEGs
+```{r}
+# Définir les identités sur la condition
+Idents(Neural) <- "Condition"
+
+
+# Trouver les DEGs entre N et D
+res <- FindMarkers(
+  Neural,
+  ident.1 = "N",  # Nicotine
+  ident.2 = "D",  # Contrôle
+  only.pos = FALSE,
+  assay = "RNA",
+  logfc.threshold = 0,
+  min.pct = 0.1
+)
+res$gene <- rownames(res)
+write.csv(res,"C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/DEG_N_vs_D_neurons.csv", row.names = FALSE)
+
+
+# Sélection des gènes significatifs
+DEG_genes <- rownames(DEG_N_vs_D[DEG_N_vs_D$p_val_adj < 0.05, ])
+
+
+# Extraire l'expression de ces gènes
+expr_matrix <- GetAssayData(Neural, assay = "RNA", slot = "data")[DEG_genes, ]
+
+
+# Nombre de DEGs exprimés (>0) par cellule
+num_DEGs_per_cell <- Matrix::colSums(expr_matrix > 0)
+
+
+# Ajouter cette info dans le metadata
+Neural$DEGs <- num_DEGs_per_cell
+
+
+# Préparer dataframe UMAP
+umap_df <- as.data.frame(Embeddings(Neural, "umap"))
+umap_df$DEGs <- Neural$DEGs
+
+
+# Palette de couleur
+mycolors <- colorRampPalette(c("#D3D3D3", "#DBADAD", "#FF0000"))(max(umap_df$DEGs))
+
+
+# Plot UMAP avec DEGs 
+pmap <- ggplot(umap_df, aes(x = UMAP_1, y = UMAP_2, color = DEGs)) +
+  geom_point(size = 1) +
+  scale_color_gradientn(colors = mycolors, limits = c(0, max(umap_df$DEGs))) +
+  theme_minimal() +
+  labs(
+    title = "Number of DEGs on UMAP (N vs D)",
+    subtitle = "Highlighting DEGs expressed per cell",
+    caption = "Dataset: N vs D"
+  ) +
+  theme(
+    legend.position = "top",
+    legend.justification = 0.5,
+    legend.key.size = unit(0.35, "cm"),
+    legend.key.width = unit(1.5, "cm"),
+    legend.text = element_text(size = 8),
+    legend.margin = margin(),
+    plot.title = element_text(size = 12, hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 10),
+    plot.caption = element_text(size = 10, face = "italic")
+  )
+pmap
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/UMAP_DEGs_N_vs_D.png", plot = pmap, width = 15, height = 10, dpi = 300)
+```
+
+
+# RES=04 INVESTIGATION
+## Top 10 gènes les plus exprimés par cluster
+```{r}
+Idents(Neural) <- "RNA_snn_res.0.4"
+
+# Trouver les marqueurs positifs pour chaque cluster
+all_markers <- FindAllMarkers(
+  Neural,
+  only.pos = TRUE,
+  min.pct = 0.25,
+  logfc.threshold = 0.25
+)
+
+
+# Vérification : affichage rapide des clusters détectés
+unique(all_markers$cluster)
+
+
+# Sélection du top 10 gènes les plus spécifiques par cluster
+top10 <- all_markers %>%
+  group_by(cluster) %>%
+  slice_max(order_by = avg_log2FC, n = 10) %>%
+  ungroup() %>%
+  mutate(cluster = as.numeric(as.character(cluster)))  # conversion en numérique pour tri correct
+
+
+# Tri global par cluster
+top10 <- top10 %>% arrange(cluster, desc(avg_log2FC))
+write.csv(top10, "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/top10_markers_per_cluster.csv", row.names = FALSE)
+
+head(top10)
+```
+
+
+## FeaturePlot des gènes clés du papier de référence (Guo et al., 2019, Single-Cell RNA Sequencing of Human Embryonic Stem Cell Differentiation Delineates Adverse Effects of Nicotine on Embryonic Development - doi: 10.1016/j.stemcr.2019.01.022)
+```{r}
+genes_paper <- c(
+  ###### CHATGPT
+  # Pluripotence
+  "POU5F1", "NANOG", "SOX2", "DPPA4", "LIN28A",
+  
+  # Neuroectoderme
+  "PAX6", "OTX2",
+  
+  # Mésoderme
+  "MESP1",   # Non-exprimé dans Neural : QC
+  
+  # Cycle cellulaire G2M/S
+  "MKI67", "TOP2A", "CDK1", "CCNB1", "CDC20",
+  
+  # Stress oxydatif / nicotine
+  "HMOX1", "NQO1", "FOS", "JUN", "DDIT3", "ATF4", "SOD2", "GPX1",   # HMOX, FOS (5), JUN (1/5), DDIT3 (1/5) sinon rien / pas grd chose
+  
+######## PAPIER
+  ######## PAPIER
+"TERF1", # Pluripotent stem cell marker
+"POUF51", # Pluripotent stem cell marker (facteur de transcription)
+"IGFBP5", # Pluripotent stem cell marker
+"HESX1", # Neuroectoderm marker
+"HES1", # Neuroectoderm marker
+"LHX5", # Neuroectoderm marker
+"HMGB2", # Neural progenitor marker
+"PTTG1", # Neural progenitor marker
+"PTN", # Neural progenitor marker
+"SFRP2", # Neural progenitor marker
+"FRZB", # bone 
+"COL2A1", # cartilage / bone 
+"HAPLN1", # cartilage / bone
+"ACTB", # cytoskeleton / muscle
+"TUBB", # tubuline -> cytoskeleton
+"S100A11", # calcium binding protein
+"NR2F1", # transcription factor
+"PTPRS", # receptor protein tyrosine phosphatase
+"LHX2", # transcription factor / de neural system
+"HNRNPH1", # RNA binding protein / AS
+"DDIT3", # stress response (ER stress) - déjà dans la liste
+"GDF15", # stress response (brain stress)
+"B3GNT7", # glycosylation enzyme
+"PODXL", # cell adhesion / cancer progression
+"ZFHX3", # transcription factor
+"NR2F2"   # transcription factor
+# GDF15 (5), ZFHX3 (0/2) sinon rien / pas grd chose
+)
+
+# Vérifie quels gènes sont présents dans ton objet
+genes_paper_present <- genes_paper[genes_paper %in% rownames(Neural)]
+cat("Nombre de gènes trouvés dans le dataset :", length(genes_paper_present), "\n")
+
+
+
+pdf("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/FeaturePlot_genes_paper.pdf", width = 15, height = 10)
+for (gene in genes_paper_present) {
+  print(
+    FeaturePlot(
+      Neural,
+      features = gene,
+      reduction = "umap",
+      cols = c("lightgrey", "red"),
+      pt.size = 0.5
+    ) + ggtitle(paste("Expression de", gene))
+  )
+}
+dev.off()
+```
+
+
+## 50 DEGs globaux N vs D
+```{r}
+# Fixe l’identité active sur la condition
+Idents(Neural) <- "Condition"
+
+
+# Trouver les DEGs entre N et D
+DEG_N_vs_D <- FindMarkers(
+  Neural,
+  ident.1 = "N",
+  ident.2 = "D",
+  only.pos = FALSE,
+  assay = "RNA",
+  logfc.threshold = 0.2,  # paramètre moins restricitfs
+  min.pct = 0.05
+)
+write.csv(DEG_N_vs_D, "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/top50_DEG_N_vs_D_all.csv")
+
+
+# Sélection des 50 gènes les plus différentiels
+top50_genes <- rownames(DEG_N_vs_D %>%
+                          arrange(desc(abs(avg_log2FC))) %>%
+                          head(50))
+
+
+pdf("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/FeaturePlot_top50_DEG.pdf", width = 15, height = 10)
+for (gene in top50_genes) {
+  print(
+    FeaturePlot(
+      Neural,
+      features = gene,
+      reduction = "umap",
+      cols = c("lightgrey", "red"),
+      pt.size = 0.5
+    ) + ggtitle(paste("Expression de", gene))
+  )
+}
+dev.off()
+```
+
+## Croiser les DEG et les genes les plus exprimé par cluster
+Quels gènes, caractéristiques d’un sous-cluster neuronal, sont aussi modulés par la condition N vs D ?
+```{r}
+
+Idents(Neural) <- "RNA_snn_res.0.4"
+
+# On va prendre, par exemple, les top gènes par cluster
+markers_clusters <- FindAllMarkers(
+  Neural,
+  only.pos = TRUE,
+  assay = "RNA",
+  min.pct = 0.25,
+  logfc.threshold = 0.25
+)
+
+# Puis garder les top N gènes par cluster (ex. 20)
+top_markers_clusters <- markers_clusters %>%
+  group_by(cluster) %>%
+  slice_max(order_by = avg_log2FC, n = 20) %>%
+  ungroup()
+
+# Croisement DEG ∩ gènes fortement exprimés
+genes_deg <- rownames(DEG_N_vs_D)
+genes_cluster <- unique(top_markers_clusters$gene)
+
+genes_common <- intersect(genes_deg, genes_cluster)
+length(genes_common)
+
+# table des gènes communs
+genes_crossed <- DEG_N_vs_D %>%
+  rownames_to_column("gene") %>%
+  filter(gene %in% genes_common) %>%
+  left_join(
+    top_markers_clusters %>% select(gene, cluster, avg_log2FC),
+    by = "gene",
+    suffix = c("_DEG", "_cluster")
+  ) %>%
+  arrange(desc(abs(avg_log2FC_DEG)))
+
+write.csv(genes_crossed,"C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/DEG_intersect_clusterMarkers.csv",row.names = FALSE)
+
+
+# FeaturePlots
+top_genes_plot <- genes_crossed$gene[1:min(20, nrow(genes_crossed))]
+
+pdf("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/FeaturePlot_DEG_clusterMarkers.pdf", width = 15, height = 10)
+
+for (gene in top_genes_plot) {
+  print(
+    FeaturePlot(
+      Neural,
+      features = gene,
+      reduction = "umap",
+      cols = c("lightgrey", "red"),
+      pt.size = 0.5
+    ) +
+      ggtitle(paste("Expression de", gene))
+  )
+}
+
+dev.off()
+```
+
+
+## Heatmaps
+```{r}
+Idents(Neural) <- "RNA_snn_res.0.4"
+
+top_genes_heatmap <- genes_crossed %>%
+  arrange(desc(abs(avg_log2FC_DEG))) %>%
+  distinct(gene) %>%
+  slice_head(n = 30) %>%
+  pull(gene)
+
+
+############# HEATMAPS #############
+# Montre où ces gènes sont exprimés dans l’espace cellulaire
+pdf("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/Heatmap_DEG_clusterMarkers_byCluster.pdf", width = 10, height = 12)
+DoHeatmap(
+  Neural,
+  features = top_genes_heatmap,
+  group.by = "RNA_snn_res.0.4",
+  assay = "RNA",
+  size = 3
+) +
+  ggtitle("DEG N vs D ∩ Cluster markers – par cluster")
+dev.off()
+
+
+# Effet condition N vs D (moyenné)
+pdf("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/Heatmap_DEG_clusterMarkers_byCondition.pdf", width = 6, height = 12)
+DoHeatmap(
+  Neural,
+  features = top_genes_heatmap,
+  group.by = "Condition",
+  assay = "RNA",
+  size = 4
+) +
+  ggtitle("DEG N vs D ∩ Cluster markers – par condition")
+dev.off()
+```
+
+
+## Stacked Violin Plot for known markers
+```{r, fig.width=3,fig.height=4,fig.align="center}
+# Set clustering identity
+Idents(Neural) <- "RNA_snn_res.0.4"
+
+# Define gene groups
+dev_forbrain <- c("HESX1", "LHX5")
+Stress <- c("RPS10", "HSP90AA1")
+cell_cycle <- c("MKI67", "CDK1")
+neural_progenitor_proliferation <- c("PTTG1", "HMGB2")
+eye_development <- c("LHX2", "IGFBP5")
+sensory_neuron_development <- c("PTPRS", "HNRNPH1")
+
+# Define cluster order and assign new identity class
+new_order <- c("0", "1", "2", "3", "4", "5")
+Neural$StackedViolin <- factor(Neural$RNA_snn_res.0.4, levels = new_order)
+Idents(Neural) <- "StackedViolin"
+
+# Modify VlnPlot to remove x-axis elements and set styling
+modify_vlnplot <- function(obj, feature,
+                           pt.size = 0,
+                           plot.margin = unit(c(-0.75, 0, -0.75, 0), "cm"),
+                           ...) {
+  p <- VlnPlot(obj, features = feature, pt.size = pt.size, cols = colfuncNeuro(6), ...) +
+    xlab("") + ylab(feature) + ggtitle("") +
+    theme(
+      legend.position = "none",
+      plot.title = element_blank(),
+      axis.title.x = element_blank(),
+      axis.text.x = element_blank(),
+      axis.ticks.x = element_blank(),
+      axis.title.y = element_text(size = rel(1), angle = 0),
+      axis.text.y = element_text(size = rel(1)),
+      plot.margin = plot.margin
+    )
+  return(p)
+}
+
+# Extract max y-axis value from ggplot object
+extract_max <- function(p) {
+  ymax <- max(ggplot_build(p)$layout$panel_scales_y[[1]]$range$range)
+  return(ceiling(ymax))
+}
+
+# Main function to stack multiple VlnPlots
+StackedVlnPlot <- function(obj, features,
+                           pt.size = 0,
+                           plot.margin = unit(c(-0.75, 0, -0.75, 0), "cm"),
+                           ...) {
+
+  plot_list <- purrr::map(features, function(x)
+    modify_vlnplot(obj = obj, feature = x, pt.size = pt.size, plot.margin = plot.margin, ...)
+  )
+
+  # Add back x-axis ticks to the last plot
+  plot_list[[length(plot_list)]] <- plot_list[[length(plot_list)]] +
+    theme(axis.text.x = element_text(), axis.ticks.x = element_line())
+
+  # Scale y-axis of each plot to show only the max tick
+  ymaxs <- purrr::map_dbl(plot_list, extract_max)
+  plot_list <- purrr::map2(plot_list, ymaxs, function(p, y)
+    p + scale_y_continuous(breaks = c(y)) + expand_limits(y = y)
+  )
+
+  # Combine plots into one figure
+  stacked_plot <- patchwork::wrap_plots(plotlist = plot_list, ncol = 1)
+  return(stacked_plot)
+}
+
+# Run the stacked violin plot
+suppressMessages(StackedVlnPlot(
+  obj = Neural,
+  features = c(dev_forbrain, neural_progenitor_proliferation, sensory_neuron_development, eye_development, cell_cycle, Stress)
+))
+
+ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/Neural_stackedViolin.png", dpi = 300)
+```
+
+# RES=07 INVESTIGATION
+## Top 10 gènes les plus exprimés par cluster
+```{r}
+Idents(Neural) <- "RNA_snn_res.0.7"
+
+# Trouver les marqueurs positifs pour chaque cluster
+all_markers <- FindAllMarkers(
+  Neural,
+  only.pos = TRUE,
+  min.pct = 0.25,
+  logfc.threshold = 0.25
+)
+
+
+# Vérification : affichage rapide des clusters détectés
+unique(all_markers$cluster)
+
+
+# Sélection du top 10 gènes les plus spécifiques par cluster
+top10 <- all_markers %>%
+  group_by(cluster) %>%
+  slice_max(order_by = avg_log2FC, n = 10) %>%
+  ungroup() %>%
+  mutate(cluster = as.numeric(as.character(cluster)))  # conversion en numérique pour tri correct
+
+
+# Tri global par cluster
+top10 <- top10 %>% arrange(cluster, desc(avg_log2FC))
+write.csv(top10, "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/top10_markers_per_cluster07.csv", row.names = FALSE)
+
+head(top10)
+```
+
+
+## DotPlot des marqueurs connus
+```{r}
+markers <- list(
+  CellCycle = c("UBE2C","TOP2A","CDC20"),
+  Forebrain = c("LHX5","HESX1","CYP26A1"),
+  ImmatureNeuron = c("DLK1","NNAT","PTN"),
+  Differentiation = c("SOX11","EFNA5","PTPRS"),
+  Neuroepithelial = c("EPCAM","KRT8","CLDN6")
+)
+
+DotPlot(Neural, features = markers) + RotatedAxis()
+
+# Pour relier à ta GSEA nicotine.
+FeaturePlot(
+  Neural,
+  features = c("SOX11","UBE2C","LHX5","DLK1"),
+  split.by = "Condition"
+)
+
+
+# Proportion de clusters par condition
+prop.table(table(Neural$seurat_clusters, Neural$Condition), 2)
+
+# barplot : proporion of Condition per clusters
+umap_df <- as.data.frame(Embeddings(Neural, "umap"))
+umap_df$condition <- Neural$Condition
+
+barplot_cluster_cond <- ggplot(umap_df, aes(x = factor(Neural$RNA_snn_res.0.7), fill = condition)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("N" = N, "D" = D)) +
+  labs(title = "Proportion de chaque condition par cluster (résolution 0.7)",
+       x = "Cluster",
+       y = "Proportion") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+barplot_cluster_cond
+#ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/Barplot_cluster07_condition.png", plot = barplot_cluster_cond, width = 15, height = 10, dpi = 300)
+```
+
+
+## Clusters annotations
+```{r}
+Idents(Neural) <- "RNA_snn_res.0.7"
+table(Idents(Neural))
+
+# Manually annotate clusters based on marker genes
+cluster_annotations <- c(
+  "0" = "Neural progenitors (immature)",
+  "1" = "Pluripotent / stem-like",
+  "2" = "Forebrain neural (eye-field) progenitors",
+  "3" = "Differentiating neurons",
+  "4" = "Differentiating progenitors",
+  "5" = "Differentiating progenitors (late)",
+  "6" = "Neuroepithelial stem cells",
+  "7" = "Neural progenitors, sensory neuron-like"
+)
+
+Neural$annotated_cluster <- plyr::mapvalues(
+  x = as.character(Neural$RNA_snn_res.0.7),
+  from = names(cluster_annotations),
+  to = cluster_annotations
+)
+table(Neural$annotated_cluster)
+
+#saveRDS(Neural,"C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/rds_files/Neural_progenitor_cells.rds")
+
+# Plot annotated UMAP
+DimPlot(
+  Neural,
+  reduction = "umap",
+  group.by = "annotated_cluster",
+  pt.size = 1,
+  label = TRUE,
+  cols = colfuncNeuro(8)
+)
+#ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/Neural_Annotated_Clusters.png", dpi = 300, width = 12, height = 6)
+```
+
+
+## Trajectory
+```{r}
+trajectory_order <- c(
+  "Pluripotent / stem-like" = "Pluripotent progenitors",
+  "Neuroepithelial stem cells" = "Neuroepithelial stem cells",
+  "Neural progenitors (immature)" = "Proliferating progenitors",
+  "Forebrain neural (eye-field) progenitors" = "Eye-field progenitors",
+  "Differentiating progenitors" = "Differentiating progenitors",
+  "Differentiating progenitors (late)" = "Differentiating progenitors (late)",
+  "Differentiating neurons" = "Immature neurons",
+  "Neural progenitors, sensory neuron-like" = "Sensory neuron–like"
+)
+
+
+Neural$trajectory <- unname(
+  trajectory_order[as.character(Neural$annotated_cluster)]
+)
+
+
+Neural$trajectory <- factor(
+  Neural$trajectory,
+  levels = trajectory_order
+)
+table(Neural$trajectory)
+
+DimPlot(
+  Neural,
+  group.by = "trajectory",
+  reduction = "umap",
+  pt.size = 0.6,
+  cols = colorRampPalette(c("#FAE5C1", "#E65C00"))(8)
+) +
+  ggtitle("Neuronal differentiation trajectory") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/Gradient_Neural_Trajectory.png", dpi = 300, width = 10, height = 6)
+```
+Nicotine exposure does not primarily enhance proliferation but biases neural progenitor fate toward early sensory neuron and eye-field–related lineages, while reducing pluripotent-like states.
+
+
+### Cluster de départ pour la trajectoire : Neuroepithelial stem cells
+```{r}
+# Barcodes des cellules appartenant au cluster "Neuroepithelial stem cells"
+start_cells_barcodes <- names(Neural$annotated_cluster)[Neural$annotated_cluster == "Pluripotent / stem-like"]
+head(start_cells_barcodes)
+
+# Extraction des coordonnées UMAP pour les barcodes sélectionnés
+start_coords <- Embeddings(Neural, "umap")[start_cells_barcodes, ]
+print(colMeans(start_coords))
+
+# embeddings UMAP
+umap <- Embeddings(Neural, "umap")
+clusters <- Neural$annotated_cluster
+head(Embeddings(Neural, "umap"))
+
+plot(
+  umap,
+  col = "lightgrey",
+  pch = 16,
+  asp = 1
+)
+points(start_coords, col = "red", pch = 17, cex = 1.5)
+```
+
+
+## Pseudotime (slingshot)
+```{r}
+clusters <- Neural$cluster
+
+umap <- Embeddings(Neural, "umap")
+
+# Calcul du pseudotime avec Slingshot
+sds <- slingshot(
+  umap,
+  clusterLabels = clusters,
+  start.clus = "Pluripotent / stem-like",
+)
+
+png(
+  filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/Neural_Trajectory.png",
+  width = 2000,
+  height = 1600,
+  res = 300
+)
+
+plot(
+  umap,
+  col = colfuncNeuro(length(unique(clusters)))[as.numeric(clusters)],
+  pch = 16,
+  asp = 1
+)
+
+# si tu ajoutes la trajectoire
+lines(SlingshotDataSet(sds), lwd = 3, col = "black")
+
+dev.off()
+
+
+# extraire le pseudotime et l'ajouter au metadata
+Neural$pseudotime <- slingPseudotime(sds)[,1]
+
+
+# Visualiser le pseudotime sur l'UMAP
+df_pt <- data.frame(
+  pseudotime = Neural$pseudotime,
+  Condition = Neural$Condition
+)
+
+ggplot(df_pt, aes(x = pseudotime, fill = Condition)) +
+  geom_density(alpha = 0.4) +
+  scale_fill_manual(values = c("N" = N, "D" = D)) +
+  theme_classic() +
+  ggtitle("Distribution du pseudotime selon la condition")
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/Neural_Trajectory_perCdt.png", dpi = 300, width = 10, height = 6)
+
+
+# gene le long de la trajectoire
+#FeaturePlot(
+#  Neural,
+#  features = c("EPCAM","UBE2C","LHX5","DLK1","SOX11"),
+#  reduction = "umap"
+#)
+
+df <- data.frame(
+  pseudotime = Neural$pseudotime,
+  SOX11 = FetchData(Neural, "SOX11")[,1],
+  condition = Neural$Condition
+)
+
+df <- df[!is.na(df$pseudotime), ]
+
+ggplot(df, aes(pseudotime, SOX11, color = condition)) +
+  geom_point(alpha = 0) +
+  geom_smooth(se = FALSE) +
+  labs(
+    title = "Expression de SOX11 le long du pseudotime",
+    x = "Pseudotime",
+    y = "Expression de SOX11"
+  ) +
+  scale_color_manual(values = c("N" = N, "D" = D)) +
+  theme_classic()
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/SOX11_Trajectory.png", dpi = 300, width = 10, height = 6)
+```
+## Interpretation distribution pseudotime N vs D:
+**Distribution bimodale** parce que les 2 conditions montrent 2 pics de densité, (~1.5 et ~13-14). Suggère 2 états cellulaires principaux le long de la trajectoire :
+Premier pic → cellules plus “immatures” ou précoces
+Deuxième pic → cellules plus “matures” ou tardives
+
+Différence entre conditions :
+D a légèrement plus de densité dans le pic initial (~0-2) → plus de cellules immatures.
+N a un pic plus marqué vers le pseudotime tardif (~12-14) → plus de cellules différenciées.
+
+## Interprétation SOX11 (FT) le long de la trajectoire
+stem → progenitors → differentiating (SOX11 intervient ici) → immature neuron
+exprimé dans neurones immatures / différenciation neuronale précoce / disparaît dans les neurones matures
+Classique dans neurogenèse / cortex (forebrain) / neurones sensoriels en développement
+Ici :
+cluster 7 : SOX11 UP ++
+cluster 3 : cycle cellulaire (SOX11 down)
+cluster 6 : neuroépithélial (SOX11 down)
+SOX11 augmente avec le pseudotime -> gène lié à la maturation et potentiellement initié par la nicotine.
+
+
+
+# PATHWAY ENRICHMENT ANALYSIS  GSEA (sur toutes les cellules neuronales)
+## Extract list of DEGs for ORA analyses
+This code compares the gene expression of merged between conditions N and D using the FindMarkers function according to the "Condition" identity and the "RNA" assay. It generates two sets of results: one for ORA with differentially expressed genes, and another unfiltered for GSEA.
+```{r}
+Idents(Neural) <- "Condition"
+DefaultAssay(Neural)="RNA"
+
+# for ORA analysis
+NvsD_ORA = FindMarkers(Neural, ident.1 = "N", ident.2 = "D", only.pos = F) 
+write.table(NvsD_ORA, "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/ORA_NvsD.csv",sep = ";", col.names = NA)
+
+# for GSEA analysis 
+NvsD_GSEA = FindMarkers(Neural, ident.1 = "N", ident.2 = "D", only.pos = F, logfc.threshold = -Inf,min.pct = -Inf, min.diff.pct = -Inf)
+write.table(NvsD_GSEA, "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/GSEA_NvsD.csv",sep = ";", col.names = NA)
+```
+
+
+## Extract list of DEGs for GSEA analyses
+```{r}
+Idents(Neural) <- "Condition"
+
+# Trouver les DEGs entre N et D  (fait précédemment mais avec des paramètres différents)
+res <- FindMarkers(
+  Neural,
+  ident.1 = "N",  # Nicotine
+  ident.2 = "D",  # Contrôle
+  only.pos = FALSE,
+  assay = "RNA",
+  logfc.threshold = 0,
+  min.pct = 0.1
+)
+res$gene <- rownames(res)
+write.csv(res,"C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/DEG_N_vs_D_neurons.csv", row.names = FALSE)
+
+
+# Préparer le vecteur de classement pour GSEA
+geneList <- res$avg_log2FC
+names(geneList) <- res$gene
+geneList <- sort(geneList, decreasing = TRUE)
+
+
+# Charger les gènes Hallmarks humains depuis MSigDB
+hallmark_sets <- msigdbr(species = "Homo sapiens", category = "H") %>%
+  dplyr::select(gs_name, gene_symbol)
+
+
+# Lancer GSEA
+gsea_res <- GSEA(
+  geneList,
+  TERM2GENE = hallmark_sets,
+  pvalueCutoff = 1,
+  verbose = FALSE
+)
+gsea_df <- as.data.frame(gsea_res@result)
+
+write.csv(gsea_df,"C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/GSEA_Hallmarks_N_vs_D.csv", row.names = FALSE)
+
+
+# Fusionner les DEGs avec les gènes enrich
+gsea_genes <- gsea_df %>%
+  dplyr::select(ID, Description, NES, core_enrichment) %>%
+  tidyr::separate_rows(core_enrichment, sep = "/") %>%
+  dplyr::rename(gene = core_enrichment)
+
+final_res <- res %>%
+  dplyr::left_join(gsea_genes, by = "gene")
+
+
+write.csv(final_res,"C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/Combined_DEG_GSEA_N_vs_D.csv",row.names = FALSE)
+
+head(gsea_df[, c("ID", "Description", "NES", "p.adjust")], 10)
+```
+
+
+## Hallmark plots
+```{r}
+# top 12 absolue
+final_res <- gsea_df %>%
+  mutate(abs_NES = abs(NES)) %>%
+  arrange(desc(abs_NES)) %>%
+  slice_head(n = 12) %>%
+  arrange(NES)
+
+final_res <- final_res %>%
+  mutate(direction = ifelse(NES > 0, "Up", "Down"))
+
+cols_gsea <- c(
+  "Up" = "#8B0000",     # rouge foncé
+  "Down" = "#C2B280"    # beige
+)
+
+p_gsea <- ggplot(
+  final_res,
+  aes(
+    x = NES,
+    y = reorder(Description, NES),
+    fill = direction
+  )
+) +
+  geom_col(width = 0.8) +
+  scale_fill_manual(values = cols_gsea) +
+  geom_vline(xintercept = 0, color = "black", linewidth = 0.6) +
+  labs(
+    x = "NES",
+    y = NULL,
+    title = "GSEA – Top 12 pathways (N vs D)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+p_gsea
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/GSEA_Top12_Hallmarks_N_vs_D.png", plot = p_gsea, width = 10, height = 6, dpi = 300)
+
+
+
+### top 12 positif ###
+final_res <- gsea_df %>%
+  arrange(desc(NES)) %>%
+  slice_head(n = 12) %>%
+  arrange(NES)
+
+final_res <- final_res %>%
+  mutate(direction = ifelse(NES > 0, "Up", "Down"))
+
+cols_gsea <- c(
+  "Up" = "#8B0000",     # rouge foncé
+  "Down" = "#C2B280"    # beige
+)
+
+p_gseapos <- ggplot(
+  final_res,
+  aes(
+    x = NES,
+    y = reorder(Description, NES),
+    fill = direction
+  )
+) +
+  geom_col(width = 0.8) +
+  scale_fill_manual(values = cols_gsea) +
+  geom_vline(xintercept = 0, color = "black", linewidth = 0.6) +
+  labs(
+    x = "NES",
+    y = NULL,
+    title = "GSEA – Top 12 pathways positifs (N vs D)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+p_gseapos
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/GSEA_Top12_Hallmarks_Positive_N_vs_D.png", plot = p_gseapos, width = 10, height = 6, dpi = 300)
+```
+
+## Interpretation
+* L’axe **NES > 0 (rouge)** correspond à des pathways **enrichis dans la condition N**
+* L’axe **NES < 0 (beige)** correspond à des pathways **enrichis dans la condition D**
+* On regarde donc **quels programmes biologiques sont activés ou réprimés par la nicotine (N) par rapport au contrôle (D)**
+
+
+UP dans N
+**Activation forte des programmes prolifératifs / biosynthétiques**
+Les 2 signaux les plus forts sont :
+* **HALLMARK_MYC_TARGETS_V1**
+* **HALLMARK_E2F_TARGETS**
+-> augmentation de :
+  * transcription globale
+  * biogenèse ribosomale
+  * cycle cellulaire / entrée en phase S
+* Chez les neurones, cela **ne veut pas dire prolifération**, mais plutôt :
+  * **stress transcriptionnel**
+  * **augmentation de la demande métabolique**
+  * parfois un **état immature / réactif**
+-> signal classique d’**hyperactivité cellulaire**.
+
+**Métabolisme mitochondrial et stress protéique**
+* **OXIDATIVE_PHOSPHORYLATION**
+* **UNFOLDED_PROTEIN_RESPONSE**
+* **DNA_REPAIR**
+Les neurones sous nicotine :
+  * consomment plus d’énergie
+  * produisent plus de ROS
+  * accumulent des protéines mal repliées
+  * activent des mécanismes de réparation
+Profil compatible avec :
+* **sur-activation neuronale chronique**
+* **stress oxydatif secondaire**
+
+**ROS et métabolisme lipidique**
+* **REACTIVE_OXYGEN_SPECIES_PATHWAY**
+* **ADIPOGENESIS**
+* Activation des défenses antioxydantes (PRDX, SOD, TXN…)
+* Ajustements métaboliques (lipides, membranes)
+Très cohérent avec :
+* activation mitochondriale
+* dérégulation redox induite par la nicotine
+
+
+DOWN dans N / UP dans D
+**Réponse hypoxique**
+* **HALLMARK_HYPOXIA**
+* Les neurones D sont plus proches d’un état hypoxique / glycolytique
+* Dans N, au contraire :
+  * préférence pour l’**OXPHOS**
+  * baisse de la signature HIF-1α
+Transition **glycolyse → mitochondries** sous nicotine.
+
+**Inflammation / cytokines**
+* **TNFA_SIGNALING_VIA_NFKB**
+* **IL6_JAK_STAT3_SIGNALING**
+* Les neurones en condition D montrent :
+  * plus de signaling inflammatoire
+* Sous nicotine, * ces voies sont **réprimées dans les neurones**
+
+
+**La nicotine induit chez les neurones un état d’hyperactivité métabolique et transcriptionnelle (MYC/E2F, OXPHOS, UPR, ROS), au prix d’un stress cellulaire accru, tandis que les neurones contrôle présentent un profil plus inflammatoire et hypoxique.**
+
+Cohérence avec l’article de référence
+Totalement cohérent avec :
+* augmentation de l’activité neuronale
+* stress oxydatif
+* activation mitochondriale
+* dissociation neurones / microglie :
+  * neurones -> métabolisme
+  * microglie -> inflammation
+
+> la nicotine ne “calme” pas les neurones, elle les **pousse dans un état énergétiquement coûteux**.
+
+> *L’analyse GSEA a révélé un fort enrichissement des programmes transcriptionnels dirigés par MYC et E2F, la phosphorylation oxydative, la réponse protéique dépliée et les voies ROS dans les neurones exposés à la nicotine, indiquant une activité métabolique et transcriptionnelle accrue. En revanche, l’hypoxie et les voies de signalisation inflammatoires (TNFα/NFκ B, IL6/STAT3) étaient relativement enrichies dans les neurones témoins.*
+
+--- 
+
+## Hypoxic control
+**les gènes d’hypoxie sont plus exprimés dans D (contrôle)** que dans N.
+Ce n’est pas “il y a de l’hypoxie”, c’est :
+> *les gènes associés à une réponse hypoxique sont relativement plus actifs dans D que dans N.*
+
+ 🔹 Hypothèse 1 — **DOWN Nicotine signature hypoxique**
+La nicotine est connue pour :
+* activer **mTOR / MYC / OXPHOS**
+* augmenter le métabolisme mitochondrial
+* favoriser un état **plus “énergétique”**
+
+Résultat logique :
+* N = métabolisme + OXPHOS UP
+* D = état basal → **signature hypoxie relative**
+
+* OXPHOS UP dans N
+* Hypoxia DOWN dans N (donc UP relatif dans D)
+ **C’est cohérent.**
+
+ 🔹 Hypothèse 2 — Hypoxia ≠ manque d’oxygène réel
+Le hallmark **HALLMARK_HYPOXIA** inclut :
+* glycolyse
+* stress ER
+* adaptation métabolique
+* ralentissement du cycle cellulaire
+
+Présence de gènes :
+* de **quiescence**
+* de **métabolisme “économe”**
+* de stress adaptatif
+-> Le contrôle peut être **plus quiescent**, pas “hypoxique”.
+
+🔹 Hypothèse 3 — Nicotine = état pro-prolifératif
+Dans  plot :
+**UP dans N**
+* MYC targets
+* E2F targets
+* DNA repair
+* mTORC1
+* OXPHOS
+**UP dans D**
+* Hypoxia
+* TNFα / NFκB
+* IL6–STAT3
+* Estrogen response early
+Ça décrit très bien :
+* **N** : état prolifératif / métaboliquement actif
+* **D** : état plus “stress basal / inflammatoire”
+
+Est-ce que UP dans D par rapport à N ?
+```{r}
+# FeaturePlot HALLMARK_HYPOXIA genes
+FeaturePlot(
+  Neural,
+  features = c("HK2", "LDHA", "SLC2A1", "BNIP3", "PDK3"),
+  reduction = "umap",
+  split.by = "Condition"
+)
+
+```
+Ce que dit le papier de référence 
+
+* La nicotine **modifie profondément le métabolisme neuronal**
+* Elle :
+  * UP respiration mitochondriale
+  * UP consommation d’oxygène
+  * DOWN signatures de stress hypoxique
+* Effet paradoxal :
+  > nicotine peut **réduire l’activation HIF1α** malgré des conditions normales
+Donc **voir Hypoxia enrichie dans le témoin est parfaitement compatible avec le papier**.
+
+> La nicotine induit un état neuronal plus métaboliquement actif et prolifératif, caractérisé par une activation de MYC/E2F/mTOR/OXPHOS, tandis que les neurones contrôles présentent une signature relative de stress métabolique de type hypoxie et inflammation basale.
+
+
+

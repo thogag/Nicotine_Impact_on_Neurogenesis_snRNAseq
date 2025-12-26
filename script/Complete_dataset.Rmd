@@ -1,0 +1,1019 @@
+  ---
+title: "Complete_dataset"
+author: "Thomas Gagnieu"
+date: "2025-11-11"
+output: html_document
+---
+
+
+# Packages
+```{r, message=FALSE, warning=FALSE}
+suppressMessages({ 
+  library(Seurat)
+  library(SeuratDisk)
+  library(SingleCellExperiment)
+  library(dplyr)
+  library(stringr)
+  library(ggplot2)
+  library(patchwork)
+  library(ggrepel)
+  library(Matrix)
+  library(ggpubr)
+  library(org.Hs.eg.db)
+  library(clusterProfiler)
+  library(tidyr)
+  library(msigdbr)
+  library(forcats)
+  library(ggplot2)
+  library(readr)
+
+  N <- "#db765e"
+  D <- "#676767"
+})
+```
+
+
+# LOAD DATA
+```{r}
+data_complet <- readRDS("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/rds_files/merged_DN_qc.rds")
+DefaultAssay(data_complet) <- "RNA"
+head(data_complet@meta.data)
+ncol(data_complet)
+table(data_complet$Condition)
+table(data_complet$seurat_clusters)
+table(data_complet$celltype)
+```
+
+# PRETREATMENTS (Mitochondiral genes)
+```{r}
+# 1. Identifier les gènes mitochondriaux
+mt_genes <- grep("^(MT-|mt-)", rownames(data_complet), value = TRUE)
+cat("Nombre de gènes mitochondriaux détectés :", length(mt_genes), "\n")
+
+# Sécurité : si aucun gène mitochondrial détecté → message
+if (length(mt_genes) == 0) {
+  warning("Aucun gène mitochondrial détecté dans data_complet. Vérifiez les annotations.")
+}
+
+# 2. Suppression dans les counts (obligatoire)
+data_complet@assays$RNA@counts <- data_complet@assays$RNA@counts[
+  !rownames(data_complet@assays$RNA@counts) %in% mt_genes, 
+]
+
+# 3. Suppression dans data (si présent)
+if (nrow(data_complet@assays$RNA@data) > 0) {
+  data_complet@assays$RNA@data <- data_complet@assays$RNA@data[
+    !rownames(data_complet@assays$RNA@data) %in% mt_genes,
+  ]
+}
+
+# 4. Suppression dans scale.data (si présent)
+if (nrow(data_complet@assays$RNA@scale.data) > 0) {
+  data_complet@assays$RNA@scale.data <- data_complet@assays$RNA@scale.data[
+    !rownames(data_complet@assays$RNA@scale.data) %in% mt_genes,
+  ]
+}
+
+# 5. Recalcul de nFeature_RNA (nombre de gènes détectés après suppression)
+data_complet$nFeature_RNA <- Matrix::colSums(data_complet@assays$RNA@counts > 0)
+
+# 6. Vérification fin de module
+cat("Vérification : ", sum(grepl("^(MT-|mt-)", rownames(data_complet))), 
+    "gènes mitochondriaux restants.\n")
+
+# 7. Sauvegarde de l’objet filtré
+saveRDS(data_complet, file="C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/rds_files/merged_DN_qc.rds")
+```
+
+
+# DATA VISULATIZATION
+## Research of the optimal dimensions 
+```{r}
+# Elbow plot
+elbow <- ElbowPlot(data_complet, ndims = 50)
+
+# Boucle avec normalisation complète
+dim <- 10
+l <- dim - 5
+h <- dim + 5
+
+plots <- lapply(l:h, FUN = function(d) {
+  message("→ Dimension: ", d)
+
+  tmp <- data_complet
+  tmp <- NormalizeData(tmp, verbose = FALSE)
+  tmp <- FindVariableFeatures(tmp, verbose = FALSE)
+  tmp <- ScaleData(tmp, verbose = FALSE)
+  tmp <- RunPCA(tmp, features = VariableFeatures(tmp), verbose = FALSE)
+  tmp <- FindNeighbors(tmp, dims = 1:d, verbose = FALSE)
+  tmp <- FindClusters(tmp, resolution = 0.7, verbose = FALSE)
+  tmp <- RunTSNE(tmp, dims = 1:d, verbose = FALSE)
+
+  # DimPlot sur les nouveaux clusters
+  DimPlot(tmp, reduction = "tsne", label = TRUE, pt.size = 0.5) +
+    ggtitle(paste0("Clustering avec ", d, " dimensions")) +
+    NoLegend()
+})
+
+# Combine les plots
+plot <- wrap_plots(plots, ncol = 3)
+plot
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/research_dimension.png", plot = plot, width = 15, height = 10, dpi = 300)
+
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/research_dimension_elbow.png", plot = elbow, width = 15, height = 10, dpi = 300)
+```
+
+
+
+## Choisir la première résolution
+```{r}
+# Vérifie qu'on a bien le PCA déjà fait
+if (!"pca" %in% names(data_complet@reductions)) {
+  data_complet <- RunPCA(data_complet, features = VariableFeatures(data_complet))
+}
+
+# Plage de résolutions à tester
+resolutions <- seq(0.3, 1.0, by = 0.1)
+
+# Liste pour stocker les plots
+plots_tsne <- list()
+
+# Boucle principale
+for (res in resolutions) {
+  message("→ Clustering avec résolution = ", res)
+
+  tmp <- FindNeighbors(data_complet, dims = 1:11, verbose = FALSE)
+  tmp <- FindClusters(tmp, resolution = res, verbose = FALSE)
+  tmp <- RunTSNE(tmp, dims = 1:11, verbose = FALSE)
+
+  tsne_df <- as.data.frame(Embeddings(tmp, "tsne"))
+  colnames(tsne_df) <- c("tSNE_1", "tSNE_2")
+  tsne_df$cluster <- Idents(tmp)
+
+  # Nombre de clusters détectés
+  n_clusters <- length(unique(tsne_df$cluster))
+
+  # Si on a plus d’un cluster, on calcule les centroïdes
+  if (n_clusters > 1) {
+    centroids <- tsne_df %>%
+      group_by(cluster) %>%
+      summarise(
+        tSNE_1 = mean(tSNE_1),
+        tSNE_2 = mean(tSNE_2)
+      )
+
+    label_layer <- geom_text_repel(
+      data = centroids,
+      aes(label = cluster),
+      color = "black",
+      size = 4,
+      fontface = "bold",
+      box.padding = 0.5,
+      show.legend = FALSE
+    )
+  } else {
+    label_layer <- NULL
+  }
+
+  # Plot ggplot
+  p <- ggplot(tsne_df, aes(x = tSNE_1, y = tSNE_2, color = cluster)) +
+    geom_point(size = 0.4, alpha = 0.8) +
+    label_layer +
+    ggtitle(paste0("tSNE – Résolution = ", res, " (", n_clusters, " clusters)")) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 12, face = "bold"),
+      legend.position = "none"
+    ) +
+    coord_equal()
+
+  plots_tsne[[as.character(res)]] <- p
+}
+
+# Combine tous les plots
+plot_tsne_res <- wrap_plots(plots_tsne, ncol = 3)
+plot_tsne_res
+
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/research_resolution_tSNE_labels.png",plot = plot_tsne_res,width = 15, height = 10, dpi = 300)
+```
+
+## TSNE avec clusters à res = 0.7
+```{r}
+# Vérifie que tu as bien ton PCA
+if (!"pca" %in% names(data_complet@reductions)) {
+  data_complet <- RunPCA(data_complet, features = VariableFeatures(data_complet))
+}
+
+
+# Calcule le clustering avec résolution = 0.7
+data_complet <- FindNeighbors(data_complet, dims = 1:11, verbose = FALSE)
+data_complet <- FindClusters(data_complet, resolution = 0.7, verbose = FALSE)
+
+
+# Si tSNE n’existe pas encore, on le calcule
+if (!"tsne" %in% names(data_complet@reductions)) {
+  data_complet <- RunTSNE(data_complet, dims = 1:11, verbose = FALSE)
+}
+
+
+# Extraction pour vérification
+tsne_df <- as.data.frame(Embeddings(data_complet, "tsne"))
+colnames(tsne_df) <- c("tSNE_1", "tSNE_2")
+tsne_df$cluster <- Idents(data_complet)
+
+tsne_cluster <- DimPlot(
+  data_complet,
+  reduction = "tsne",
+  group.by = "seurat_clusters",
+  label = TRUE,
+  repel = TRUE,
+  pt.size = 0.8
+) +
+  ggtitle("tSNE – Résolution 0.7") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    legend.position = "right",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(),
+    panel.grid = element_blank()
+  ) +
+  coord_equal()
+
+tsne_cluster
+
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/tSNE_clusters_res07.png", plot = tsne_cluster, width = 15, height = 10, dpi = 300)
+```
+
+## Paper process
+```{r}
+Idents(data_complet) <- data_complet$Condition
+
+data_N <- subset(data_complet, subset = Condition == "N")
+data_D <- subset(data_complet, subset = Condition == "D")
+
+# tSNE global (sur toutes les cellules)
+if (!"tsne" %in% names(data_complet@reductions)) {
+  data_complet <- RunTSNE(data_complet, dims = 1:11)
+}
+
+
+# Coordonnées tSNE
+tsne_df <- as.data.frame(Embeddings(data_complet, "tsne"))
+tsne_df$Condition <- data_complet$Condition
+tsne_df$cluster <- Idents(data_complet)
+
+
+# Plot Control seul
+p_D <- ggplot(tsne_df %>% filter(Condition == "D"),
+              aes(x = tSNE_1, y = tSNE_2, color = cluster)) +
+  geom_point(size = 0.8, alpha = 0.8) +
+  scale_color_manual(values = D) +
+  theme_void() +
+  ggtitle("Control") +
+  theme(legend.position = "none")
+
+
+# lot Nicotine seul
+p_N <- ggplot(tsne_df %>% filter(Condition == "N"),
+              aes(x = tSNE_1, y = tSNE_2, color = cluster)) +
+  geom_point(size = 0.8, alpha = 0.8) +
+  scale_color_manual(values = N) +
+  theme_void() +
+  ggtitle("Nicotine") +
+  theme(legend.position = "none")
+
+
+# Plot combiné Seurat avec labels
+p_tsne_combined <- ggplot(tsne_df, aes(x = tSNE_1, y = tSNE_2, color = Condition)) +
+  geom_point(size = 0.8, alpha = 0.8) +
+  scale_color_manual(values = c("D" = D, "N" = N)) +
+  ggtitle("tSNE combinée : D vs N") +
+  theme_minimal(base_size = 14) +
+  coord_equal() +
+  theme(
+    legend.position = "right",
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12),
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+
+final_plot <- p_D + p_N + p_tsne_combined + plot_layout(ncol = 3, widths = c(1, 1, 1.5))
+final_plot
+
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/tSNE_combined_conditions.png", plot = final_plot, width = 18, height = 10, dpi = 300)
+```
+
+
+## Cells proportion per condition in all datas
+```{r}
+# Tableau de contingence
+contingency_table_all <- table(data_complet$Condition)
+contingency_df_all <- as.data.frame(contingency_table_all)
+colnames(contingency_df_all) <- c("Condition", "CellCount")
+
+
+# Calcul des pourcentages
+contingency_df_all <- contingency_df_all %>%
+  mutate(Percentage = (CellCount / sum(CellCount)) * 100)
+table(contingency_df_all)
+
+
+# Bar plot
+proportion_plot_all <- ggplot(contingency_df_all, aes(x = Condition, y = Percentage, fill = Condition)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("N" = N, "D" = D)) +
+  labs(
+    title = "Cell Proportion per Condition",
+    x = "Condition",
+    y = "Percentage of Cells (%)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    legend.position = "right",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10)
+  )
+proportion_plot_all
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/barplot_condition_propall.png", plot = proportion_plot_all, width = 15, height = 10, dpi = 300)
+
+table(Idents(data_complet))
+# D : 55.14%
+# N : 44.86%
+```
+
+
+
+## Cells proportion per condition and cluster
+```{r}
+# Tableau de contingence
+contingency_table <- table(data_complet$seurat_clusters, data_complet$Condition)
+contingency_df <- as.data.frame(contingency_table)
+colnames(contingency_df) <- c("Cluster", "Condition", "CellCount")
+
+
+# Calcul des pourcentages
+contingency_df <- contingency_df %>%
+  group_by(Cluster) %>%
+  mutate(Percentage = (CellCount / sum(CellCount)) * 100) %>%
+  ungroup()
+
+
+# Bar plot
+proportion_plot <- ggplot(contingency_df, aes(x = Cluster, y = Percentage, fill = Condition)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("N" = N, "D" = D)) +
+  labs(
+    title = "Cell Proportion per Condition and Cluster",
+    x = "Cluster",
+    y = "Percentage of Cells (%)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    legend.position = "right",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10)
+  )
+proportion_plot
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/barplot_condition_proportion_dodge.png", plot = proportion_plot, width = 15, height = 10, dpi = 300)
+
+
+# Table âge x cluster
+plot.data.age <- data_complet@meta.data %>%
+  dplyr::select(Condition, cluster = seurat_clusters) %>%
+  group_by(cluster, Condition) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(cluster) %>%
+  mutate(clust_total = sum(count)) %>%
+  mutate(clust_prop = count / clust_total)
+
+
+# Barplot empilé (sans les légendes)
+plot_condition_wtL <- ggplot(plot.data.age, aes(x = cluster, y = clust_prop, fill = Condition)) +
+  geom_col() +
+  theme_bw() +
+  scale_fill_manual(values = c("N" = N, "D" = D)) +
+  NoLegend() +
+  labs(x = "Clusters", y = "Proportion per cluster", fill = "Condition") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+plot_condition_wtL
+
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/barplot_condition_propclust_wtL.png", plot = plot_condition_wtL, width = 15, height = 10, dpi = 300)
+
+# Barplot empilé 
+plot_condition <- ggplot(plot.data.age, aes(x = cluster, y = clust_prop, fill = Condition)) +
+  geom_col() +
+  theme_bw() +
+  scale_fill_manual(values = c("N" = N, "D" = D)) +
+  labs(x = "Clusters", y = "Proportion per cluster", fill = "Condition") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+plot_condition
+
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/barplot_condition_propclust.png", plot = plot_condition, width = 15, height = 10, dpi = 300)
+```
+
+
+# HALLMARKS ANALYSIS
+## Extract list of DEGs for ORA analyses
+This code compares the gene expression of merged between conditions N and D using the FindMarkers function according to the "Condition" identity and the "RNA" assay. It generates two sets of results: one for ORA with differentially expressed genes, and another unfiltered for GSEA.
+```{r}
+Idents(data_complet) <- "Condition"
+DefaultAssay(data_complet)="RNA"
+
+# for ORA analysis
+NvsD_ORA = FindMarkers(data_complet, ident.1 = "N", ident.2 = "D", only.pos = F) 
+write.table(NvsD_ORA, "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/allcells/ORA_NvsD.csv",sep = ";", col.names = NA)
+
+# for GSEA analysis 
+NvsD_GSEA = FindMarkers(data_complet, ident.1 = "N", ident.2 = "D", only.pos = F, logfc.threshold = -Inf,min.pct = -Inf, min.diff.pct = -Inf)
+write.table(NvsD_GSEA, "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/allcells/GSEA_NvsD.csv",sep = ";", col.names = NA)
+```
+
+## Extract list of DEGs for GSEA analyses
+```{r}
+Idents(data_complet) <- "Condition"
+
+# Trouver les DEGs entre N et D
+res <- FindMarkers(
+  data_complet,
+  ident.1 = "N",  # Nicotine
+  ident.2 = "D",  # Contrôle
+  only.pos = FALSE,
+  assay = "RNA",
+  logfc.threshold = 0,
+  min.pct = 0.1
+)
+res$gene <- rownames(res)
+write.csv(res,"C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/allcells/DEG_N_vs_D_allcells.csv", row.names = FALSE)
+
+
+# Préparer le vecteur de classement pour GSEA
+geneList <- res$avg_log2FC
+names(geneList) <- res$gene
+geneList <- sort(geneList, decreasing = TRUE)
+
+
+# Charger les gènes Hallmarks humains depuis MSigDB
+hallmark_sets <- msigdbr(species = "Homo sapiens", category = "H") %>%
+  dplyr::select(gs_name, gene_symbol)
+
+
+# Lancer GSEA
+gsea_res <- GSEA(
+  geneList,
+  TERM2GENE = hallmark_sets,
+  pvalueCutoff = 1,
+  verbose = FALSE
+)
+gsea_df <- as.data.frame(gsea_res@result)
+
+write.csv(gsea_df,"C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/allcells/GSEA_Hallmarks_N_vs_D.csv", row.names = FALSE)
+
+
+# Fusionner les DEGs avec les gènes enrich
+gsea_genes <- gsea_df %>%
+  dplyr::select(ID, Description, NES, core_enrichment) %>%
+  tidyr::separate_rows(core_enrichment, sep = "/") %>%
+  dplyr::rename(gene = core_enrichment)
+
+final_res <- res %>%
+  dplyr::left_join(gsea_genes, by = "gene")
+
+
+write.csv(final_res,"C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/allcells/Combined_DEG_GSEA_N_vs_D.csv",row.names = FALSE)
+
+head(gsea_df[, c("ID", "Description", "NES", "p.adjust")], 10)
+```
+
+
+## Following manual extraction on cytoscape, create a dot plot with results appearing
+This code loads and merges two CSV datasets containing analysis results for conditions N and D It generates point graphs for each condition, using color gradients to represent FDR values and point size for NES scores. Graphics are combined side by side for visual comparison and saved as a single image.
+```{r}
+# Charger ton fichier Hallmark humain (issu du GSEA)
+hallmark_df <- read.csv(  "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/allcells/GSEA_Hallmarks_N_vs_D.csv", sep = ",", header = TRUE, stringsAsFactors = FALSE)
+
+# Vérifie les colonnes disponibles
+print(colnames(hallmark_df))
+
+
+# On garde uniquement les infos principales pour le plot
+hallmark_df <- hallmark_df %>%
+  dplyr::select(ID, NES, p.adjust) %>%
+  dplyr::rename(Gene.Sets = ID, `FDR.q.val` = p.adjust)
+
+
+# Remplacer les valeurs NA si besoin
+hallmark_df <- hallmark_df %>%
+  mutate(
+    NES = ifelse(is.na(NES), 0, NES),
+    `FDR.q.val` = ifelse(is.na(`FDR.q.val`), 1, `FDR.q.val`)
+  )
+
+
+# Trier et transformer les noms
+hallmark_df <- hallmark_df %>%
+  arrange(`FDR.q.val`, desc(NES))
+
+
+# Convertir les noms de voies en facteur (pour garder l’ordre dans le plot)
+hallmark_df$Gene.Sets <- factor(hallmark_df$Gene.Sets, levels = rev(hallmark_df$Gene.Sets))
+
+
+# Ajouter la condition unique pour le plot
+hallmark_df$Condition <- "N_vs_D"
+
+
+# Construction dot plot
+plot_hallmark <- ggplot(hallmark_df, aes(
+  x = Condition,
+  y = fct_rev(Gene.Sets),     # inverse pour un ordre vertical logique
+  size = abs(NES),
+  fill = `FDR.q.val`
+)) +
+  geom_point(shape = 21, color = "black") +
+  scale_size_continuous(range = c(3, 15), name = "|NES|") +
+  scale_fill_gradient(low = "#d62728", high = "white", name = "FDR q-value") +
+  labs(
+    x = "",
+    y = "Hallmark Gene Sets",
+    title = "Hallmark Pathways – Nicotine vs Control (N vs D)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text.y = element_text(size = 11, hjust = 0.5, vjust = 0.5),
+    axis.title.y = element_text(size = 12, margin = margin(r = 15)),
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    panel.grid.major.y = element_blank(), # retire les lignes derrière le texte
+    panel.grid.minor.y = element_blank()
+  ) +
+  coord_cartesian(clip = "off")
+
+
+
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/Hallmark_DotPlot_N_vs_D.png", plot = plot_hallmark, width = 15, height = 10, dpi = 300)
+
+print(plot_hallmark)
+```
+
+
+# ANNOTATION
+## TOP 20 markers per cluster 
+```{r}
+Idents(data_complet) <- "seurat_clusters"
+
+# Vérifie qu'on a bien les clusters à 0.7
+if (!"seurat_clusters" %in% colnames(data_complet@meta.data)) {
+  data_complet <- FindNeighbors(data_complet, dims = 1:11)
+  data_complet <- FindClusters(data_complet, resolution = 0.7)
+}
+
+
+# Identification des marqueurs de chaque cluster
+markers <- FindAllMarkers(
+  object = data_complet,
+  only.pos = TRUE,        # on ne garde que les gènes enrichis
+  min.pct = 0.25,         # au moins 25% des cellules du cluster expriment le gène
+  logfc.threshold = 0.25, # seuil de logFC
+  verbose = FALSE
+)
+
+
+# Récupère les 20 meilleurs gènes par cluster selon le score (p_val_adj ou avg_log2FC)
+top20 <- markers %>%
+  group_by(cluster) %>%
+  top_n(n = 20, wt = avg_log2FC)
+
+
+write_csv(top20,"C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/allcells/top20_markers_per_cluster_res07.csv")
+
+print(top20)
+```
+
+
+## Coresponding Heatmap (only for the 10 fisrt markers per clusters)
+```{r}
+top10 <- markers %>%
+  group_by(cluster) %>%
+  top_n(n = 10, wt = avg_log2FC)
+
+# Liste complète des gènes à scaler
+genes_to_scale <- unique(top10$gene)
+
+# Scale uniquement ces gènes
+data_complet <- ScaleData(
+  data_complet,
+  features = genes_to_scale,
+  verbose = FALSE
+)
+
+# Vérification
+genes_scaled <- rownames(data_complet[["RNA"]]@scale.data)
+missing_after <- genes_to_scale[!(genes_to_scale %in% genes_scaled)]
+missing_after  # doit être character(0)
+
+top10_heatmap <- DoHeatmap(
+  data_complet,
+  features = genes_to_scale,
+  group.by = "seurat_clusters",
+  size = 3
+) +
+  ggtitle("Top 10 Markers per Cluster (res = 0.7)") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    axis.text.y = element_text(size = 6)
+  )
+
+top10_heatmap
+
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/heatmap_markers.png", plot = top10_heatmap, width = 15, height = 10, dpi = 300)
+
+```
+
+
+## DotPlot with known markers
+```{r}
+# Liste de marqueurs cohérente avec tes clusters + le papier
+markers_list <- list(
+  "Neural progenitors" = c("SOX2","PAX6","HES1","FABP7","STMN2","DCX"),
+  
+  "Stem-like (USCs)" = c("POU5F1","TDGF1","PODXL","TERF1","CD24","TMSB4X"),
+  
+  "Epithelial progenitors" = c("KRT8","KRT18","KRT19","CLDN4","CLDN7","LY6E"),
+  
+  "Stromal progenitors" = c("COL1A1","COL3A1","FN1","DCN","LUM"),
+  
+  "Cycling cells" = c("MKI67","TOP2A","CENPF","UBE2C","NUSAP1"),
+  
+  "Stress / Inflammatory" = c("DDIT3","GDF15","CDKN1A","PMAIP1","S100A9","S100A11"),
+  
+  "Squamous-like (cluster 12 signature)" = c("SPRR3","ANXA1","S100A16","S100A6","TPM1")
+)
+
+# Flatten pour Seurat
+all_markers <- unique(unlist(markers_list))
+
+# DotPlot
+dot <- DotPlot(
+  data_complet,
+  features = all_markers,
+  group.by = "seurat_clusters"
+) +
+  RotatedAxis() +
+  scale_color_viridis_c() +
+  ggtitle("DotPlot – Validation des types cellulaires (résolution 0.7)") +
+  theme(
+    axis.text.x = element_text(size = 11, angle = 45, hjust = 1),
+    axis.text.y = element_text(size = 12),
+    plot.title = element_text(size = 18, face = "bold")
+  )
+dot
+
+# PDF multipage
+pdf("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/FeaturePlot_markers_res07.pdf", width = 15, height = 10)
+
+for (gene in all_markers) {
+  
+  # Check si le gène existe
+  if (gene %in% rownames(data_complet)) {
+    
+    print(
+      FeaturePlot(
+        data_complet,
+        features = gene,
+        reduction = "tsne",   
+        cols = c("lightgrey", "red"), pt.size = 1.1
+      ) +
+        ggtitle(paste("FeaturePlot –", gene)) +
+        theme(
+          plot.title = element_text(size = 16, face = "bold", hjust = 0.5)
+        )
+    )
+    
+  } else {
+    message("Gène absent du dataset : ", gene)
+  }
+}
+
+dev.off()
+
+
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/DotPlot_annotation_res07.png", plot = dot, width = 15, height = 10, dpi = 300)
+```
+
+
+## Final visualisation
+```{r}
+Idents(data_complet) <- data_complet$seurat_clusters
+
+# S'assurer qu'on a bien un PCA
+if (!"pca" %in% names(data_complet@reductions)) {
+  data_complet <- RunPCA(data_complet, features = VariableFeatures(data_complet))
+}
+
+# Vérifier le clustering résolution 0.7
+if (!"seurat_clusters" %in% colnames(data_complet@meta.data) ||
+    nlevels(data_complet$seurat_clusters) != 13) {
+
+  data_complet <- FindNeighbors(data_complet, dims = 1:11)
+  data_complet <- FindClusters(data_complet, resolution = 0.7)
+}
+
+# Vérifier que tSNE existe (sinon on le calcule une seule fois)
+if (!"tsne" %in% names(data_complet@reductions)) {
+  data_complet <- RunTSNE(data_complet, dims = 1:11)
+}
+
+cluster_annotation <- c(
+  "0"  = "Neural progenitor cells",
+  "1"  = "Neural progenitor cells",
+  "2"  = "Neural progenitor cells",
+  "3"  = "Neural progenitor cells",
+  "4"  = "Neural progenitor cells",
+  "5"  = "Epithelial progenitor cells",
+  "6"  = "Stromal progenitor cells",
+  "7"  = "Neural progenitor cells",
+  "8"  = "Neural progenitor cells",
+  "9"  = "Undetermined cells (UDCs)",
+  "10" = "Stromal progenitor cells",
+  "11" = "Undifferentiated Stem-like Cells (USCs)",
+  "12" = "Epithelial progenitor cells"
+)
+
+# Ajout dans l'objet (sans toucher Idents())
+data_complet$celltype <- cluster_annotation[
+  as.character(data_complet$seurat_clusters)
+]
+
+
+table(data_complet$seurat_clusters, data_complet$celltype)
+
+# save modifications
+# saveRDS(data_complet, "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/rds_files/merged_DN_qc.rds")
+
+# On garde Idents = seurat_clusters
+Idents(data_complet) <- data_complet$seurat_clusters
+
+
+p_annot <- DimPlot(
+  data_complet,
+  reduction = "tsne",
+  group.by = "celltype",
+  label = TRUE,
+  repel = TRUE,
+  pt.size = 1.1
+) +
+  scale_color_manual(values = c(
+    "Neural progenitor cells"             = "#1f77b4",
+    "Epithelial progenitor cells"         = "#ff7f0e",
+    "Stromal progenitor cells"            = "#2ca02c",
+    "Undetermined cells (UDCs)"           = "#d62728",
+    "Undifferentiated Stem-like Cells (USCs)" = "#9467bd"
+  )) +
+  ggtitle("Annotated tSNE – Cell types")
+p_annot
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/tSNE_annotated.png", plot = p_annot, width = 15, height = 10, dpi = 300)
+```
+
+# QC
+## Percet mitochondiral genes
+```{r}
+data_complet$percent.mt <- PercentageFeatureSet(data_complet, pattern = "^MT-")
+
+mito <- VlnPlot(
+  data_complet,
+  features = "percent.mt",
+  group.by = "celltype",
+  pt.size = 0.2
+) +
+  scale_fill_manual(values = c(
+    "Neural progenitor cells"             = "#1f77b4",
+    "Epithelial progenitor cells"         = "#ff7f0e",
+    "Stromal progenitor cells"            = "#2ca02c",
+    "Undetermined cells (UDCs)"           = "#d62728",
+    "Undifferentiated Stem-like Cells (USCs)" = "#9467bd"
+  ))+
+  ggtitle("Mitochondrial gene percentage per cell type")
+
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/Mito_proportions.png", plot = mito, width = 15, height = 10, dpi = 300)
+```
+
+
+## N Feature per cluster
+```{r}
+# violin plot 
+VlnPlot(
+  data_complet,
+  features = "nFeature_RNA",
+  group.by = "celltype",
+  pt.size = 0.2
+) +
+  scale_fill_manual(values = c(
+    "Neural progenitor cells"             = "#1f77b4",
+    "Epithelial progenitor cells"         = "#ff7f0e",
+    "Stromal progenitor cells"            = "#2ca02c",
+    "Undetermined cells (UDCs)"           = "#d62728",
+    "Undifferentiated Stem-like Cells (USCs)" = "#9467bd"
+  ))+
+  ggtitle("nFeature_RNA per cell type")
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/nFeature_per_celltype.png", width = 15, height = 10, dpi = 300)
+
+
+# Barplot
+df <- data_complet@meta.data %>%
+  count(celltype) %>%
+  mutate(proportion = n / sum(n))
+
+ggplot(df, aes(x = "", y = proportion, fill = celltype)) +
+  geom_bar(stat = "identity", position = "fill") +
+  coord_flip() +
+  scale_fill_manual(values = c(
+    "Neural progenitor cells"                  = "#1f77b4",
+    "Epithelial progenitor cells"              = "#ff7f0e",
+    "Stromal progenitor cells"                 = "#2ca02c",
+    "Undetermined cells (UDCs)"                = "#d62728",
+    "Undifferentiated Stem-like Cells (USCs)"  = "#9467bd"
+  )) +
+  ggtitle("Proportion of cells per cell type (normalized)") +
+  ylab("Proportion") +
+  xlab("") +
+  theme_classic()
+
+
+ggplot(df, aes(x = celltype, y = proportion, fill = celltype)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = c(
+    "Neural progenitor cells"                  = "#1f77b4",
+    "Epithelial progenitor cells"              = "#ff7f0e",
+    "Stromal progenitor cells"                 = "#2ca02c",
+    "Undetermined cells (UDCs)"                = "#d62728",
+    "Undifferentiated Stem-like Cells (USCs)"  = "#9467bd"
+  )) +
+  ggtitle("Proportion of cells per cell type") +
+  ylab("Proportion") +
+  theme(axis.text.x = element_text(angle=45, hjust=1))
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/nfeature_barplot.png", width = 15, height = 10, dpi = 300)
+```
+
+
+## Display statistical summaries by cell type
+```{r}
+data_complet@meta.data %>%
+  group_by(celltype) %>%
+  summarise(
+    cells = n(),
+    mean_nFeature = mean(nFeature_RNA),
+    median_nFeature = median(nFeature_RNA),
+    mean_percent_mt = mean(percent.mt),
+    median_percent_mt = median(percent.mt)
+  )
+```
+
+
+# STRESS ANALYSIS
+## ROS reaction
+```{r}
+# Set clustering identity
+Idents(data_complet) <- "RNA_snn_res.0.7"
+
+# Define ROS-related genes
+ROS_genes <- c("HMOX1", "NQO1", "FOS", "JUN", "DDIT3", "ATF4", "SOD2", "GPX1")
+
+# Generate Violin Plot for ROS-related genes
+ros <- VlnPlot(
+  data_complet,
+  features = ROS_genes,
+  pt.size = 0
+) +
+  ggtitle("Expression of ROS-related genes across clusters") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+ros
+ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/Neural_ROS_genes_ViolinPlot.png", plot=ros, width = 10, height = 12, dpi = 300)
+
+
+# Expression of ROS-related genes across cell type
+p <- VlnPlot(
+  data_complet,
+  features = ROS_genes,
+  group.by = "celltype",
+  pt.size = 0
+) +
+  ggtitle("Expression of ROS-related genes across cell types") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 8)
+  )
+p
+ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/Neural_ROS_genes_ViolinPlot_percelltype.png", plot=p, width = 10, height = 12, dpi=300)
+
+
+# Expression of ROS-related genes across condition
+p_condition <- VlnPlot(
+  data_complet,
+  features = ROS_genes,
+  group.by = "Condition",
+  pt.size = 0,
+  cols = c("N" = N, "D" = D)
+) +
+  ggtitle("Expression of ROS-related genes across conditions") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 8)
+  )
+p_condition
+ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/Neural_ROS_genes_ViolinPlot_percondition.png", plot=p_condition, width = 10, height = 12, dpi=300)
+```
+
+
+## Ca2+ reaction
+```{r}
+# Set clustering identity
+Idents(data_complet) <- "RNA_snn_res.0.7"
+
+# Define Ca2+ genes
+Ca_genes <- c("HMGB1", "TLR4", "CALM1", "CALM2", "CALM3", "CAMK2A", "CAMK2B", "CAMK2D", "CAMK2G")
+
+
+# Generate Violin Plot for Ca2+ related genes
+ca <- VlnPlot(
+  data_complet,
+  features = Ca_genes,
+  pt.size = 0
+) +
+  ggtitle("Expression of Ca2+ related genes across clusters") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+ca
+ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/Neural_Ca_genes_ViolinPlot.png", plot=ca, width = 10, height = 12, dpi = 300)
+
+
+# Expression of Ca2+-related genes across cell type
+pca <- VlnPlot(
+  data_complet,
+  features = Ca_genes,
+  group.by = "celltype",
+  pt.size = 0
+) +
+  ggtitle("Expression of Ca2+ related genes across cell types") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 8)
+  )
+pca
+ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/Neural_Ca_genes_ViolinPlot_percelltype.png", plot=pca, width = 10, height = 12, dpi=300)
+
+
+# Expression of Ca2+ related genes across condition
+pca_condition <- VlnPlot(
+  data_complet,
+  features = Ca_genes,
+  group.by = "Condition",
+  pt.size = 0,
+  cols = c("N" = N, "D" = D)
+) +
+  ggtitle("Expression of Ca2+ related genes across conditions") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 8)
+  )
+pca_condition
+ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/Neural_Ca_genes_ViolinPlot_percondition.png", plot=pca_condition, width = 10, height = 12, dpi=300)
+```
+
+
+# SAVE RDS FILES
+```{r}
+
+cols_to_remove <- c("RNA_snn_res.0.3", "RNA_snn_res.0.7", "seurat_clusters", "RNA_snn_res.0.8")
+data_complet@meta.data <- data_complet@meta.data[, !(colnames(data_complet@meta.data) %in% cols_to_remove)]
+head(data_complet@meta.data)
+
+
+# List of unique cell types
+celltypes <- unique(data_complet$celltype)
+
+subset(data_complet, cells = WhichCells(data_complet, expression = celltype == "Neural progenitor cells")) %>%
+  saveRDS("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/rds_files/Neural_progenitor_cells.rds")
+
+subset(data_complet, cells = WhichCells(data_complet, expression = celltype == "Epithelial progenitor cells")) %>%
+  saveRDS("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/rds_files/Epithelial_progenitor_cells.rds")
+
+subset(data_complet, cells = WhichCells(data_complet, expression = celltype == "Stromal progenitor cells")) %>%
+  saveRDS("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/rds_files/Stromal_progenitor_cells.rds")
+
+subset(data_complet, cells = WhichCells(data_complet, expression = celltype == "Undetermined cells (UDCs)")) %>%
+  saveRDS("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/rds_files/UDCs.rds")
+
+subset(data_complet, cells = WhichCells(data_complet, expression = celltype == "Undifferentiated Stem-like Cells (USCs)")) %>%
+  saveRDS("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/rds_files/USCs.rds")
+```

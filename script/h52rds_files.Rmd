@@ -1,0 +1,141 @@
+---
+title: "h5ad_to_rds_QC"
+author: "Thomas Gagnieu"
+date: "2025-10-30"
+output: html_document
+---
+
+# Packages
+```{r, message=FALSE, warning=FALSE}
+library(Seurat)
+library(SeuratDisk)
+library(SingleCellExperiment)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(patchwork)
+library(ggrepel)
+library(Matrix)
+library(ggpubr)
+```
+
+
+# Load raw data
+```{r}
+h5_D_path <- "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/GSM3573649_D_filtered_gene_bc_matrices_h5.h5"
+h5_N_path <- "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/GSM3573650_N_filtered_gene_bc_matrices_h5.h5"
+
+# Lecture directe des fichiers 10X
+counts_D <- Read10X_h5(h5_D_path)
+counts_N <- Read10X_h5(h5_N_path)
+```
+
+
+# Pre Treatment
+## H5 conversion function + raw files to Seurat
+We convert each file . h5ad into a SingleCellExperiment object, then into a Seurat object. We also add an orig.ident annotation corresponding to the source file name.
+```{r}
+seu_D <- CreateSeuratObject(counts = counts_D, project = "D")
+seu_N <- CreateSeuratObject(counts = counts_N, project = "N")
+```
+
+
+## QC
+We calculate:
+- the number of genes detected (nFeature_RNA)
+- the total number of UMI (nCount_RNA)
+- the percentage of mitochondrial genes (percent.mt)
+
+Then we filter in a flexible way:
+nFeature_RNA > 200
+nFeature_RNA < 6000
+percent.mt < 15
+```{r}
+# Mitochondrial genes
+seu_D[["percent.mt"]] <- PercentageFeatureSet(seu_D, pattern = "(^MT-|^mt-)")
+seu_N[["percent.mt"]] <- PercentageFeatureSet(seu_N, pattern = "(^MT-|^mt-)")
+
+# QC plots
+VlnPlot(seu_D, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+VlnPlot(seu_N, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+# Filtering
+seu_D <- subset(seu_D, subset = nFeature_RNA > 200 & nFeature_RNA < 6000 & percent.mt < 15)
+seu_N <- subset(seu_N, subset = nFeature_RNA > 200 & nFeature_RNA < 6000 & percent.mt < 15)
+
+```
+
+
+## Fusion + backup 
+We merge all the filtered objects into one. Each cell keeps its original identifier.
+```{r}
+seurat_merged <- merge(seu_D, y = seu_N)
+table(seurat_merged$orig.ident)
+# Voir les noms des colonnes de métadonnées
+colnames(seurat_merged@meta.data)
+
+# Aperçu des premières lignes
+head(seurat_merged@meta.data)
+
+# Résumé global
+summary(seurat_merged@meta.data)
+
+# Liste des noms de gènes
+head(rownames(seurat_merged))        # ou pour les 10 premiers
+length(rownames(seurat_merged))      # nombre total de gènes
+
+# Création d'un data.frame complet (métadonnées + expression génique)
+expr <- as.data.frame(t(as.matrix(seurat_merged[["RNA"]]@data)))  # cellules x gènes
+meta <- seurat_merged@meta.data
+data_full <- cbind(meta, expr)
+
+# Aperçu
+head(data_full[, 1:10])  # 10 premières colonnes
+```
+
+
+## Normalisation
+```{r}
+# Normalisation
+seurat_merged <- NormalizeData(seurat_merged)
+
+# Identification des features variables
+seurat_merged <- FindVariableFeatures(seurat_merged)
+
+# Mise à l'échelle
+seurat_merged <- ScaleData(seurat_merged)
+
+# PCA
+seurat_merged <- RunPCA(seurat_merged)
+
+# UMAP
+seurat_merged <- RunUMAP(seurat_merged, dims = 1:20)
+
+# Clustering
+seurat_merged <- FindNeighbors(seurat_merged, dims = 1:20)
+seurat_merged <- FindClusters(seurat_merged, resolution = 0.5)
+
+expr <- as.data.frame(t(as.matrix(seurat_merged[["RNA"]]@data)))
+meta <- seurat_merged@meta.data
+data_full <- cbind(meta, expr)
+head(data_full[, 1:10])
+
+# Renommer les colonnes pour correspondre à la résolution réelle
+data_complet@meta.data <- data_complet@meta.data %>%
+  dplyr::rename(Condition = orig.ident)
+Idents(data_complet) <- data_complet$Condition
+
+data_complet@meta.data <- data_complet@meta.data %>%
+  dplyr::rename(RNA_snn_res.0.3 = RNA_snn_res.0.5)
+Idents(data_complet) <- data_complet$RNA_snn_res.0.3
+
+# Vérification rapide
+head(data_complet@meta.data[, c("orig.ident", "RNA_snn_res.0.3")])
+```
+
+
+# Save RDS file 
+```{r}
+saveRDS(seurat_merged, "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/rds_files/merged_DN_qc.rds")
+```
+
