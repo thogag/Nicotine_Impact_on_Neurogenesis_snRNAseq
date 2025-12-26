@@ -12,6 +12,7 @@ By combining:
 
 we aim to identify how nicotine alters neuronal states, developmental progression, and key biological pathways.
 In the long term, the goal is to copy this process performed on neurons, on all other cell types of the dataset. To know that this dataset is public and has been retrieved on [Kaggle](https://www.kaggle.com/datasets/alexandervc/scrnaseq-human-embryonic-stem-cell-under-nicotine) and whose reference paper is:
+
 [Single-Cell RNA Sequencing of Human Embryonic Stem Cell Differentiation Delineates Adverse Effects of Nicotine on Embryonic Development](https://pmc.ncbi.nlm.nih.gov/articles/PMC6449785/)
 
 
