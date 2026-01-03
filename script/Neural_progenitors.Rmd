@@ -700,7 +700,7 @@ dev_forbrain <- c("HESX1", "LHX5")
 Stress <- c("RPS10", "HSP90AA1")
 cell_cycle <- c("MKI67", "CDK1")
 neural_progenitor_proliferation <- c("PTTG1", "HMGB2")
-eye_development <- c("LHX2", "IGFBP5")
+eye_development <- c("LH++X2", "IGFBP5")
 sensory_neuron_development <- c("PTPRS", "HNRNPH1")
 
 # Define cluster order and assign new identity class
@@ -874,10 +874,10 @@ DimPlot(
   reduction = "umap",
   group.by = "annotated_cluster",
   pt.size = 1,
-  label = TRUE,
+  label = FALSE,
   cols = colfuncNeuro(8)
 )
-#ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/Neural_Annotated_Clusters.png", dpi = 300, width = 12, height = 6)
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/Neural_Annotated_Clusters.png", dpi = 300, width = 12, height = 6)
 ```
 
 
@@ -1120,6 +1120,8 @@ head(gsea_df[, c("ID", "Description", "NES", "p.adjust")], 10)
 
 ## Hallmark plots
 ```{r}
+gsea_df <- read.csv("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/GSEA_Hallmarks_N_vs_D.csv")
+
 # top 12 absolue
 final_res <- gsea_df %>%
   mutate(abs_NES = abs(NES)) %>%
@@ -1157,7 +1159,7 @@ p_gsea <- ggplot(
     plot.title = element_text(hjust = 0.5, face = "bold")
   )
 p_gsea
-ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/GSEA_Top12_Hallmarks_N_vs_D.png", plot = p_gsea, width = 10, height = 6, dpi = 300)
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/GSEA_Top12_Hallmarks_N_vs_D.png", plot = p_gsea, width = 7, height = 3, dpi = 300)
 
 
 
@@ -1197,7 +1199,7 @@ p_gseapos <- ggplot(
     plot.title = element_text(hjust = 0.5, face = "bold")
   )
 p_gseapos
-ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/GSEA_Top12_Hallmarks_Positive_N_vs_D.png", plot = p_gseapos, width = 10, height = 6, dpi = 300)
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/GSEA_Top12_Hallmarks_Positive_N_vs_D.png", plot = p_gseapos, width = 7, height = 3, dpi = 300)
 ```
 
 ## Interpretation
@@ -1274,7 +1276,7 @@ Totalement cohérent avec :
 
 > la nicotine ne “calme” pas les neurones, elle les **pousse dans un état énergétiquement coûteux**.
 
-> *L’analyse GSEA a révélé un fort enrichissement des programmes transcriptionnels dirigés par MYC et E2F, la phosphorylation oxydative, la réponse protéique dépliée et les voies ROS dans les neurones exposés à la nicotine, indiquant une activité métabolique et transcriptionnelle accrue. En revanche, l’hypoxie et les voies de signalisation inflammatoires (TNFα/NFκ B, IL6/STAT3) étaient relativement enrichies dans les neurones témoins.*
+> *L’analyse GSEA a révélé un fort enrichissement des programmes transcriptionnels dirigés par MYC et E2F, la phosphorylation oxydative, la réponse protéique dépliée et les voies ROS dans les neurones exposés à la nicotine, indiquant une activité métabolique et transcriptionnelle accrue. En revanche, l’hypoxie et les voies de signalisation inflammatoires (TNF alpha/NFκ B, IL6/STAT3) étaient relativement enrichies dans les neurones témoins.*
 
 --- 
 
@@ -1349,7 +1351,345 @@ Ce que dit le papier de référence
   > nicotine peut **réduire l’activation HIF1α** malgré des conditions normales
 Donc **voir Hypoxia enrichie dans le témoin est parfaitement compatible avec le papier**.
 
-> La nicotine induit un état neuronal plus métaboliquement actif et prolifératif, caractérisé par une activation de MYC/E2F/mTOR/OXPHOS, tandis que les neurones contrôles présentent une signature relative de stress métabolique de type hypoxie et inflammation basale.
 
 
 
+## ROS sont plus exprimés dans N que dans D ? (papier dit oui)
+```{r}
+# Ne garder que les neurones
+neurons <- subset(
+  Neural,
+  subset = annotated_cluster %in% c(
+    "Differentiating neurons",
+    "Neural progenitors, sensory neuron-like"
+  )
+)
+
+Idents(neurons) <- "Condition"
+
+# DEG
+deg <- FindMarkers(
+  neurons,
+  ident.1 = "D",
+  ident.2 = "N",
+  logfc.threshold = 0.25,
+  min.pct = 0.1
+)
+
+deg_sig <- deg[deg$p_val_adj < 0.05, ]
+genes_up <- rownames(deg_sig[deg_sig$avg_log2FC > 0, ])
+
+# Enrichissement GO
+ego <- enrichGO(
+  gene          = genes_up,
+  OrgDb         = org.Hs.eg.db,
+  keyType       = "SYMBOL",
+  ont           = "BP",
+  pAdjustMethod = "BH",
+  readable      = TRUE
+)
+
+ego_df <- as.data.frame(ego)
+
+# Termes ROS-like
+ros_terms <- ego_df[
+  grepl(
+    "oxidative|hypoxia|reactive oxygen|unfolded",
+    ego_df$Description,
+    ignore.case = TRUE
+  ),
+]
+
+
+
+ros_terms <- unique(unlist(strsplit(ros_terms$geneID, "/")))
+
+# Module score ROS
+neurons <- AddModuleScore(
+  neurons,
+  features = list(ros_terms),
+  name = "ROS_score"
+)
+#head(neurons@meta.data$ROS_score1)
+
+Neural$ROS_score1 <- NA
+Neural$ROS_score1[colnames(neurons)] <- neurons$ROS_score1
+summary(Neural$ROS_score1)
+
+#saveRDS(Neural,"C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/rds_files/Neural_progenitor_cells.rds")
+
+# Dataframe pour stats + plot
+df_ros <- data.frame(
+  ROS = neurons$ROS_score1,
+  Condition = neurons$Condition
+)
+
+# Wilcoxon test (N > D)
+wilcox_ros <- wilcox.test(
+  ROS ~ Condition,
+  data = df_ros,
+  alternative = "greater"
+)
+
+wilcox_ros
+
+# Plot
+y_max <- max(df_ros$ROS, na.rm = TRUE) * 0.9
+
+ggplot(df_ros, aes(x = Condition, y = ROS, fill = Condition)) +
+  stat_summary(fun = mean, geom = "bar", width = 0.6, color = "black") +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2) +
+  stat_compare_means(
+    method = "wilcox.test",
+    alternative = "greater",
+    comparisons = list(c("D", "N")),
+    label = "p.signif"
+  ) +
+  scale_fill_manual(values = c("N" = N, "D" = D)) +
+
+  theme_classic(base_size = 16) +
+  ylab("Score de stress oxydatif (A.U., centré)") +
+  xlab("") +
+  ggtitle("Activation du stress oxydatif")
+
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/ROS_score_neurons_N_vs_D.png",dpi = 300, width = 5, height = 5)
+
+# plot sans légende
+y_max <- max(df_ros$ROS, na.rm = TRUE) * 0.9
+
+ggplot(df_ros, aes(x = Condition, y = ROS, fill = Condition)) +
+  stat_summary(fun = mean, geom = "bar", width = 0.6, color = "black") +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2) +
+  
+  stat_compare_means(
+    method = "wilcox.test",
+    alternative = "greater",
+    comparisons = list(c("D", "N")),
+    label = "p.signif",
+    label.y = y_max
+  ) +
+  
+  scale_fill_manual(values = c("N" = N, "D" = D)) +
+
+  theme_classic(base_size = 16) +
+  ylab("Score de stress oxydatif (A.U., centré)") +
+  xlab("") +
+  ggtitle("Activation du stress oxydatif") +
+  NoLegend()
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/ROS_score_neurons_N_vs_D_noleg.png",dpi = 300, width = 4, height = 4)
+
+#Le score de stress oxydatif correspond à un score d’expression relative (module score) centré autour de zéro. Ainsi, la comparaison entre conditions est interprétée de manière relative, indépendamment de la valeur absolue du score.
+```
+
+## Plot
+```{r}
+library(viridis)
+head(Neural$ROS_score1)
+
+FeaturePlot(
+  Neural,
+  features = "ROS_score1",
+  reduction = "umap",
+  cols = viridis(256),
+  pt.size = 0.6,
+  order = TRUE
+) +
+  ggtitle("Score de stress oxydatif (ROS) – Neurones") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+
+
+# split by condition
+FeaturePlot(
+  Neural,
+  features = "ROS_score1",
+  reduction = "umap",
+  split.by = "Condition",
+  cols = viridis(256),
+  pt.size = 0.6
+) &
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+# version ggplot
+df_umap <- as.data.frame(Embeddings(Neural, "umap"))
+df_umap$ROS <- Neural$ROS_score1
+df_umap$Condition <- Neural$Condition
+
+ggplot(df_umap, aes(UMAP_1, UMAP_2, color = ROS)) +
+  geom_point(size = 0.5) +
+  scale_color_viridis(option = "viridis") +
+  theme_void(base_size = 14) +
+  ggtitle("Projection du score ROS sur l’UMAP (neurones)") +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold")
+  )
+
+
+FeaturePlot(
+  Neural,
+  features = c("BNIP3", "MT1X", "HSP90AA1"),
+  reduction = "umap",
+  cols = viridis(256),
+  ncol = 3
+)
+```
+
+```{r}
+df_ros <- data.frame(
+  ROS = neurons$ROS_score1,
+  Condition = neurons$Condition
+)
+
+# Retirer les NA (sécurité)
+df_ros <- df_ros[!is.na(df_ros$ROS), ]
+
+neurons$Condition <- factor(neurons$Condition, levels = c("N", "D"))
+# Wilcoxon test (N > D)
+wilcox_ros <- wilcox.test(
+  ROS ~ Condition,
+  data = df_ros,
+  alternative = "greater"
+)
+
+wilcox_ros
+wilcox_ros$p.value
+
+p_vln_ros <- ggplot(df_ros, aes(x = Condition, y = ROS, fill = Condition)) +
+  
+  # Violin
+  geom_violin(
+    trim = FALSE,
+    alpha = 0.7,
+    color = "black"
+  ) +
+  
+  # Boxplot au centre
+  geom_boxplot(
+    width = 0.15,
+    outlier.shape = NA,
+    color = "black"
+  ) +
+  
+  # Test de Wilcoxon directement sur le plot
+  stat_compare_means(
+    method = "wilcox.test",
+    alternative = "greater",
+    comparisons = list(c("N", "D")),
+    label = "p.signif",
+    size = 6
+  ) +
+  
+  scale_fill_manual(values = c("N" = N, "D" = D)) +
+  
+  labs(
+    title = "Score de stress oxydatif dans les neurones",
+    subtitle = "Comparaison Nicotine (N) vs Contrôle (D)",
+    y = "Score de stress oxydatif (A.U.)",
+    x = ""
+  ) +
+  
+  theme_classic(base_size = 16) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+
+p_vln_ros
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/ROS_score_neurons_N_vs_D_violin.png", plot = p_vln_ros, dpi = 300, width = 5, height = 5)
+
+```
+La nicotine induit un stress oxydatif dans une sous-population de neurones, sans augmentation globale homogène du ROS dans l’ensemble des neurones.
+
+# GOTERM ANALYSIS
+```{r}
+go_table <- as.data.frame(ego)
+
+# Construire colonne Genes avec tous les gènes du GO term séparés par "_"
+go_table$Genes <- sapply(as.character(go_table$geneID), function(g) {
+  genes <- unlist(strsplit(g, "[^A-Za-z0-9_/]+"))  # séparer par tout séparateur non alphanumérique
+  paste(genes, collapse = "_")
+})
+
+# Calculer Score et Zscore
+go_table <- go_table %>%
+  mutate(
+    Pathway  = paste0(Description, ":", ID),
+    Score    = -log10(pvalue) * Count,
+    Zscore   = as.numeric(scale(Count))  # Zscore sur Count original
+  )
+
+# Construire le tableau final
+go_final <- go_table %>%
+  select(Pathway, Genes, Pvalue = pvalue, nGenes = Count, Score, Zscore, FDR = p.adjust)
+
+# Optionnel : filtrer uniquement les pathways avec au moins un gène dans le dataset Seurat
+# si tu veux absolument ne garder que ceux présents dans ton objet Neural :
+# go_final <- go_final %>% filter(sapply(strsplit(Genes, "_"), function(x) any(x %in% rownames(Neural))))
+
+write.table(go_final,file = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/GO_enrichment_neurons_nicotine.csv",sep = ",",row.names = FALSE,col.names = TRUE,quote = FALSE,fileEncoding = "UTF-8")
+```
+L’exposition à la nicotine induit une activation accrue des voies liées au stress oxydatif, à la réponse au stress cellulaire et au métabolisme énergétique dans les neurones, suggérant une reprogrammation métabolique associée à une accélération de la différenciation neuronale.
+
+
+## Plot go term 
+```{r}
+# Charger le tableau
+go_final <- read.csv("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/GO_enrichment_neurons_nicotine.csv", sep = ";", header = TRUE)
+colnames(go_final)
+
+
+# Sélectionner les top 12 par Score absolu (tu peux aussi utiliser -log10(FDR) si tu préfères)
+top_go <- go_final %>%
+  arrange(desc(abs(Score))) %>%
+  slice_head(n = 12) %>%
+  arrange(Score) %>%
+  mutate(direction = ifelse(Score > 0, "Up", "Down"))
+
+cols_go <- c(
+  "Up" = "#8B0000",     # rouge foncé
+  "Down" = "#C2B280"    # beige
+)
+
+# Définir les limites X
+xlim <- max(abs(top_go$Score))
+xmax <- max(top_go$Score, na.rm = TRUE) * 1.05
+
+
+# plot
+p_go <- ggplot(
+  top_go,
+  aes(
+    x = Score,
+    y = reorder(Pathway, Score),
+    fill = direction,
+    alpha = -log10(FDR)
+  )
+) +
+  geom_col(width = 0.8) +
+  scale_fill_manual(values = cols_go) +
+  scale_alpha(range = c(0.5, 1)) +
+  scale_x_continuous(limits = c(-xlim, xlim)) +
+  geom_vline(xintercept = 0, color = "black", linewidth = 0.6) +
+  scale_x_continuous(
+    limits = c(0, xmax),
+    expand = c(0, 0)
+  ) +
+  labs(
+    x = "Score d'enrichissement",
+    y = NULL,
+    title = "Top 12 GO Terms – Neurones (N vs D)"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.title.position = "plot",
+    legend.position = "none"
+  )
+
+p_go
+
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/GO_Enrichment_Top12.png", plot = p_go, width = 7, height = 3, dpi = 300)
+```

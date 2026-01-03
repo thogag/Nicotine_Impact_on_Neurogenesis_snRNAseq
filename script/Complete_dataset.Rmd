@@ -46,7 +46,7 @@ table(data_complet$celltype)
 
 # PRETREATMENTS (Mitochondiral genes)
 ```{r}
-# 1. Identifier les gènes mitochondriaux
+# Identifier les gènes mitochondriaux
 mt_genes <- grep("^(MT-|mt-)", rownames(data_complet), value = TRUE)
 cat("Nombre de gènes mitochondriaux détectés :", length(mt_genes), "\n")
 
@@ -55,33 +55,33 @@ if (length(mt_genes) == 0) {
   warning("Aucun gène mitochondrial détecté dans data_complet. Vérifiez les annotations.")
 }
 
-# 2. Suppression dans les counts (obligatoire)
+# Suppression dans les counts (obligatoire)
 data_complet@assays$RNA@counts <- data_complet@assays$RNA@counts[
   !rownames(data_complet@assays$RNA@counts) %in% mt_genes, 
 ]
 
-# 3. Suppression dans data (si présent)
+# Suppression dans data (si présent)
 if (nrow(data_complet@assays$RNA@data) > 0) {
   data_complet@assays$RNA@data <- data_complet@assays$RNA@data[
     !rownames(data_complet@assays$RNA@data) %in% mt_genes,
   ]
 }
 
-# 4. Suppression dans scale.data (si présent)
+# Suppression dans scale.data (si présent)
 if (nrow(data_complet@assays$RNA@scale.data) > 0) {
   data_complet@assays$RNA@scale.data <- data_complet@assays$RNA@scale.data[
     !rownames(data_complet@assays$RNA@scale.data) %in% mt_genes,
   ]
 }
 
-# 5. Recalcul de nFeature_RNA (nombre de gènes détectés après suppression)
+# Recalcul de nFeature_RNA (nombre de gènes détectés après suppression)
 data_complet$nFeature_RNA <- Matrix::colSums(data_complet@assays$RNA@counts > 0)
 
-# 6. Vérification fin de module
+# Vérification fin de module
 cat("Vérification : ", sum(grepl("^(MT-|mt-)", rownames(data_complet))), 
     "gènes mitochondriaux restants.\n")
 
-# 7. Sauvegarde de l’objet filtré
+# Sauvegarde de l’objet filtré
 saveRDS(data_complet, file="C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/rds_files/merged_DN_qc.rds")
 ```
 
@@ -775,16 +775,126 @@ p_annot <- DimPlot(
   pt.size = 1.1
 ) +
   scale_color_manual(values = c(
-    "Neural progenitor cells"             = "#1f77b4",
-    "Epithelial progenitor cells"         = "#ff7f0e",
-    "Stromal progenitor cells"            = "#2ca02c",
-    "Undetermined cells (UDCs)"           = "#d62728",
-    "Undifferentiated Stem-like Cells (USCs)" = "#9467bd"
+    "Neural progenitor cells"             = "lightskyblue",
+    "Epithelial progenitor cells"         = "lightpink",
+    "Stromal progenitor cells"            = "olivedrab3",
+    "Undetermined cells (UDCs)"           = "grey",
+    "Undifferentiated Stem-like Cells (USCs)" = "tan1"
   )) +
   ggtitle("Annotated tSNE – Cell types")
 p_annot
-ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/tSNE_annotated.png", plot = p_annot, width = 15, height = 10, dpi = 300)
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/tSNE_annotated.png", plot = p_annot, width = 9, height = 7, dpi = 300)
+
+
+# Without legend and with label in bold
+p_annotnoleg <- DimPlot(
+  data_complet,
+  reduction = "tsne",
+  group.by = "celltype",
+  label = FALSE,
+  pt.size = 1
+)
+p_annotnoleg <- LabelClusters(
+  plot = p_annotnoleg,
+  id = "celltype",
+  repel = TRUE,
+  size = 5,
+  fontface = "bold"
+) +
+  scale_color_manual(values = c(
+    "Neural progenitor cells"                 = "lightskyblue",
+    "Epithelial progenitor cells"             = "lightpink",
+    "Stromal progenitor cells"                = "olivedrab3",
+    "Undetermined cells (UDCs)"                = "grey",
+    "Undifferentiated Stem-like Cells (USCs)"  = "tan1"
+  )) +
+  ggtitle(NULL) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold"),
+    axis.text = element_text(face = "bold")
+  )
+p_annotnoleg
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/tSNE_annotatednoleg.png", plot = p_annotnoleg, width = 9, height = 7, dpi = 300)
 ```
+
+
+## Cells proportion per condition in celltypes
+```{r}
+contingency_table <- table(data_complet$celltype, data_complet$Condition)
+contingency_df <- as.data.frame(contingency_table)
+colnames(contingency_df) <- c("celltype", "Condition", "CellCount")
+
+
+# Calcul des pourcentages
+contingency_df <- contingency_df %>%
+  group_by(celltype) %>%
+  mutate(Percentage = (CellCount / sum(CellCount)) * 100) %>%
+  ungroup()
+
+
+# Bar plot
+proportion_plot <- ggplot(contingency_df, aes(x = celltype, y = Percentage, fill = Condition)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = c("N" = N, "D" = D)) +
+  labs(
+    title = "Cell Proportion per Condition and celltype",
+    x = "celltype",
+    y = "Percentage of Cells (%)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    legend.position = "right",
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10)
+  )
+proportion_plot
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/barplot_condition_proportion_celltype.png", plot = proportion_plot, width = 15, height = 10, dpi = 300)
+
+
+# Table âge x celltype
+plot.data.age <- data_complet@meta.data %>%
+  dplyr::select(Condition, celltype = celltype) %>%
+  group_by(celltype, Condition) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  group_by(celltype) %>%
+  mutate(clust_total = sum(count)) %>%
+  mutate(clust_prop = count / clust_total)
+
+
+# Barplot empilé (sans les légendes)
+plot_condition_wtL <- ggplot(plot.data.age, aes(x = celltype, y = clust_prop, fill = Condition)) +
+  geom_col() +
+  theme_bw() +
+  scale_fill_manual(values = c("N" = N, "D" = D)) +
+  NoLegend() +
+  labs(x = "celltype", y = "Proportion per celltype", fill = "Condition") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid = element_blank(),      
+    panel.border = element_blank()  
+    )
+plot_condition_wtL
+
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/barplot_condition_celltype_wtL.png", plot = plot_condition_wtL, width = 4, height = 5, dpi = 300)
+
+# Barplot empilé 
+plot_condition <- ggplot(plot.data.age, aes(x = celltype, y = clust_prop, fill = Condition)) +
+  geom_col() +
+  theme_bw() +
+  scale_fill_manual(values = c("N" = N, "D" = D)) +
+  labs(x = "celltype", y = "Proportion per celltype", fill = "Condition") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid = element_blank(),      
+    panel.border = element_blank()  
+    )
+plot_condition
+
+ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/barplot_condition_celltype.png", plot = plot_condition, width = 4, height = 5, dpi = 300)
+```
+
 
 # QC
 ## Percet mitochondiral genes
@@ -817,14 +927,14 @@ VlnPlot(
   data_complet,
   features = "nFeature_RNA",
   group.by = "celltype",
-  pt.size = 0.2
+  pt.size = 0
 ) +
   scale_fill_manual(values = c(
-    "Neural progenitor cells"             = "#1f77b4",
-    "Epithelial progenitor cells"         = "#ff7f0e",
-    "Stromal progenitor cells"            = "#2ca02c",
-    "Undetermined cells (UDCs)"           = "#d62728",
-    "Undifferentiated Stem-like Cells (USCs)" = "#9467bd"
+    "Neural progenitor cells"                 = "lightskyblue",
+    "Epithelial progenitor cells"             = "lightpink",
+    "Stromal progenitor cells"                = "olivedrab3",
+    "Undetermined cells (UDCs)"                = "grey",
+    "Undifferentiated Stem-like Cells (USCs)"  = "tan1"
   ))+
   ggtitle("nFeature_RNA per cell type")
 ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/nFeature_per_celltype.png", width = 15, height = 10, dpi = 300)
@@ -839,11 +949,11 @@ ggplot(df, aes(x = "", y = proportion, fill = celltype)) +
   geom_bar(stat = "identity", position = "fill") +
   coord_flip() +
   scale_fill_manual(values = c(
-    "Neural progenitor cells"                  = "#1f77b4",
-    "Epithelial progenitor cells"              = "#ff7f0e",
-    "Stromal progenitor cells"                 = "#2ca02c",
-    "Undetermined cells (UDCs)"                = "#d62728",
-    "Undifferentiated Stem-like Cells (USCs)"  = "#9467bd"
+    "Neural progenitor cells"                  = "lightskyblue",
+    "Epithelial progenitor cells"              = "lightpink",
+    "Stromal progenitor cells"                 = "olivedrab3",
+    "Undetermined cells (UDCs)"                = "grey",
+    "Undifferentiated Stem-like Cells (USCs)"  = "tan1"
   )) +
   ggtitle("Proportion of cells per cell type (normalized)") +
   ylab("Proportion") +
@@ -854,11 +964,11 @@ ggplot(df, aes(x = "", y = proportion, fill = celltype)) +
 ggplot(df, aes(x = celltype, y = proportion, fill = celltype)) +
   geom_bar(stat = "identity") +
   scale_fill_manual(values = c(
-    "Neural progenitor cells"                  = "#1f77b4",
-    "Epithelial progenitor cells"              = "#ff7f0e",
-    "Stromal progenitor cells"                 = "#2ca02c",
-    "Undetermined cells (UDCs)"                = "#d62728",
-    "Undifferentiated Stem-like Cells (USCs)"  = "#9467bd"
+    "Neural progenitor cells"                  = "lightskyblue",
+    "Epithelial progenitor cells"              = "lightpink",
+    "Stromal progenitor cells"                 = "olivedrab3",
+    "Undetermined cells (UDCs)"                = "grey",
+    "Undifferentiated Stem-like Cells (USCs)"  = "tan1"
   )) +
   ggtitle("Proportion of cells per cell type") +
   ylab("Proportion") +
@@ -932,7 +1042,7 @@ p_condition <- VlnPlot(
     axis.text.x = element_text(angle = 45, hjust = 1, size = 8)
   )
 p_condition
-ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/Neural_ROS_genes_ViolinPlot_percondition.png", plot=p_condition, width = 10, height = 12, dpi=300)
+  ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/Neural_ROS_genes_ViolinPlot_percondition.png", plot=p_condition, width = 10, height = 12, dpi=300)
 ```
 
 
