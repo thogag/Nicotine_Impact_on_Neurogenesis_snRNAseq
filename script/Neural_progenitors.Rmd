@@ -375,7 +375,6 @@ ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/p
 # Définir les identités sur la condition
 Idents(Neural) <- "Condition"
 
-
 # Trouver les DEGs entre N et D
 res <- FindMarkers(
   Neural,
@@ -389,31 +388,24 @@ res <- FindMarkers(
 res$gene <- rownames(res)
 write.csv(res,"C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/DEG_N_vs_D_neurons.csv", row.names = FALSE)
 
-
 # Sélection des gènes significatifs
 DEG_genes <- rownames(DEG_N_vs_D[DEG_N_vs_D$p_val_adj < 0.05, ])
-
 
 # Extraire l'expression de ces gènes
 expr_matrix <- GetAssayData(Neural, assay = "RNA", slot = "data")[DEG_genes, ]
 
-
 # Nombre de DEGs exprimés (>0) par cellule
 num_DEGs_per_cell <- Matrix::colSums(expr_matrix > 0)
 
-
 # Ajouter cette info dans le metadata
 Neural$DEGs <- num_DEGs_per_cell
-
 
 # Préparer dataframe UMAP
 umap_df <- as.data.frame(Embeddings(Neural, "umap"))
 umap_df$DEGs <- Neural$DEGs
 
-
 # Palette de couleur
 mycolors <- colorRampPalette(c("#D3D3D3", "#DBADAD", "#FF0000"))(max(umap_df$DEGs))
-
 
 # Plot UMAP avec DEGs 
 pmap <- ggplot(umap_df, aes(x = UMAP_1, y = UMAP_2, color = DEGs)) +
@@ -454,10 +446,8 @@ all_markers <- FindAllMarkers(
   logfc.threshold = 0.25
 )
 
-
 # Vérification : affichage rapide des clusters détectés
 unique(all_markers$cluster)
-
 
 # Sélection du top 10 gènes les plus spécifiques par cluster
 top10 <- all_markers %>%
@@ -465,7 +455,6 @@ top10 <- all_markers %>%
   slice_max(order_by = avg_log2FC, n = 10) %>%
   ungroup() %>%
   mutate(cluster = as.numeric(as.character(cluster)))  # conversion en numérique pour tri correct
-
 
 # Tri global par cluster
 top10 <- top10 %>% arrange(cluster, desc(avg_log2FC))
@@ -529,8 +518,6 @@ genes_paper <- c(
 genes_paper_present <- genes_paper[genes_paper %in% rownames(Neural)]
 cat("Nombre de gènes trouvés dans le dataset :", length(genes_paper_present), "\n")
 
-
-
 pdf("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/FeaturePlot_genes_paper.pdf", width = 15, height = 10)
 for (gene in genes_paper_present) {
   print(
@@ -552,7 +539,6 @@ dev.off()
 # Fixe l’identité active sur la condition
 Idents(Neural) <- "Condition"
 
-
 # Trouver les DEGs entre N et D
 DEG_N_vs_D <- FindMarkers(
   Neural,
@@ -564,7 +550,6 @@ DEG_N_vs_D <- FindMarkers(
   min.pct = 0.05
 )
 write.csv(DEG_N_vs_D, "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/top50_DEG_N_vs_D_all.csv")
-
 
 # Sélection des 50 gènes les plus différentiels
 top50_genes <- rownames(DEG_N_vs_D %>%
@@ -586,6 +571,7 @@ for (gene in top50_genes) {
 }
 dev.off()
 ```
+
 
 ## Croiser les DEG et les genes les plus exprimé par cluster
 Quels gènes, caractéristiques d’un sous-cluster neuronal, sont aussi modulés par la condition N vs D ?
@@ -627,7 +613,6 @@ genes_crossed <- DEG_N_vs_D %>%
   arrange(desc(abs(avg_log2FC_DEG)))
 
 write.csv(genes_crossed,"C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/DEG_intersect_clusterMarkers.csv",row.names = FALSE)
-
 
 # FeaturePlots
 top_genes_plot <- genes_crossed$gene[1:min(20, nrow(genes_crossed))]
@@ -674,7 +659,6 @@ DoHeatmap(
 ) +
   ggtitle("DEG N vs D ∩ Cluster markers – par cluster")
 dev.off()
-
 
 # Effet condition N vs D (moyenné)
 pdf("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/Heatmap_DEG_clusterMarkers_byCondition.pdf", width = 6, height = 12)
@@ -781,7 +765,6 @@ all_markers <- FindAllMarkers(
   logfc.threshold = 0.25
 )
 
-
 # Vérification : affichage rapide des clusters détectés
 unique(all_markers$cluster)
 
@@ -792,7 +775,6 @@ top10 <- all_markers %>%
   slice_max(order_by = avg_log2FC, n = 10) %>%
   ungroup() %>%
   mutate(cluster = as.numeric(as.character(cluster)))  # conversion en numérique pour tri correct
-
 
 # Tri global par cluster
 top10 <- top10 %>% arrange(cluster, desc(avg_log2FC))
@@ -820,7 +802,6 @@ FeaturePlot(
   features = c("SOX11","UBE2C","LHX5","DLK1"),
   split.by = "Condition"
 )
-
 
 # Proportion de clusters par condition
 prop.table(table(Neural$seurat_clusters, Neural$Condition), 2)
@@ -894,11 +875,9 @@ trajectory_order <- c(
   "Neural progenitors, sensory neuron-like" = "Sensory neuron–like"
 )
 
-
 Neural$trajectory <- unname(
   trajectory_order[as.character(Neural$annotated_cluster)]
 )
-
 
 Neural$trajectory <- factor(
   Neural$trajectory,
@@ -977,7 +956,6 @@ lines(SlingshotDataSet(sds), lwd = 3, col = "black")
 
 dev.off()
 
-
 # extraire le pseudotime et l'ajouter au metadata
 Neural$pseudotime <- slingPseudotime(sds)[,1]
 
@@ -994,7 +972,6 @@ ggplot(df_pt, aes(x = pseudotime, fill = Condition)) +
   theme_classic() +
   ggtitle("Distribution du pseudotime selon la condition")
 ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/Neural_Trajectory_perCdt.png", dpi = 300, width = 10, height = 6)
-
 
 # gene le long de la trajectoire
 #FeaturePlot(
@@ -1025,15 +1002,15 @@ ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/p
 ```
 ## Interpretation distribution pseudotime N vs D:
 **Distribution bimodale** parce que les 2 conditions montrent 2 pics de densité, (~1.5 et ~13-14). Suggère 2 états cellulaires principaux le long de la trajectoire :
-Premier pic → cellules plus “immatures” ou précoces
-Deuxième pic → cellules plus “matures” ou tardives
+Premier pic -> cellules plus “immatures” ou précoces
+Deuxième pic -> cellules plus “matures” ou tardives
 
 Différence entre conditions :
 D a légèrement plus de densité dans le pic initial (~0-2) → plus de cellules immatures.
 N a un pic plus marqué vers le pseudotime tardif (~12-14) → plus de cellules différenciées.
 
 ## Interprétation SOX11 (FT) le long de la trajectoire
-stem → progenitors → differentiating (SOX11 intervient ici) → immature neuron
+stem -> progenitors -> differentiating (SOX11 intervient ici) -> immature neuron
 exprimé dans neurones immatures / différenciation neuronale précoce / disparaît dans les neurones matures
 Classique dans neurogenèse / cortex (forebrain) / neurones sensoriels en développement
 Ici :
@@ -1078,17 +1055,14 @@ res <- FindMarkers(
 res$gene <- rownames(res)
 write.csv(res,"C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/DEG_N_vs_D_neurons.csv", row.names = FALSE)
 
-
 # Préparer le vecteur de classement pour GSEA
 geneList <- res$avg_log2FC
 names(geneList) <- res$gene
 geneList <- sort(geneList, decreasing = TRUE)
 
-
 # Charger les gènes Hallmarks humains depuis MSigDB
 hallmark_sets <- msigdbr(species = "Homo sapiens", category = "H") %>%
   dplyr::select(gs_name, gene_symbol)
-
 
 # Lancer GSEA
 gsea_res <- GSEA(
@@ -1098,9 +1072,7 @@ gsea_res <- GSEA(
   verbose = FALSE
 )
 gsea_df <- as.data.frame(gsea_res@result)
-
 write.csv(gsea_df,"C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/GSEA_Hallmarks_N_vs_D.csv", row.names = FALSE)
-
 
 # Fusionner les DEGs avec les gènes enrich
 gsea_genes <- gsea_df %>%
@@ -1110,8 +1082,6 @@ gsea_genes <- gsea_df %>%
 
 final_res <- res %>%
   dplyr::left_join(gsea_genes, by = "gene")
-
-
 write.csv(final_res,"C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/Combined_DEG_GSEA_N_vs_D.csv",row.names = FALSE)
 
 head(gsea_df[, c("ID", "Description", "NES", "p.adjust")], 10)
@@ -1122,7 +1092,7 @@ head(gsea_df[, c("ID", "Description", "NES", "p.adjust")], 10)
 ```{r}
 gsea_df <- read.csv("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/GSEA_Hallmarks_N_vs_D.csv")
 
-# top 12 absolue
+### top 12 "absolue" ###
 final_res <- gsea_df %>%
   mutate(abs_NES = abs(NES)) %>%
   arrange(desc(abs_NES)) %>%
@@ -1161,9 +1131,7 @@ p_gsea <- ggplot(
 p_gsea
 ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/GSEA_Top12_Hallmarks_N_vs_D.png", plot = p_gsea, width = 7, height = 3, dpi = 300)
 
-
-
-### top 12 positif ###
+### top 12 positif only ###
 final_res <- gsea_df %>%
   arrange(desc(NES)) %>%
   slice_head(n = 12) %>%
@@ -1338,7 +1306,6 @@ FeaturePlot(
   reduction = "umap",
   split.by = "Condition"
 )
-
 ```
 Ce que dit le papier de référence 
 
@@ -1350,8 +1317,6 @@ Ce que dit le papier de référence
 * Effet paradoxal :
   > nicotine peut **réduire l’activation HIF1α** malgré des conditions normales
 Donc **voir Hypoxia enrichie dans le témoin est parfaitement compatible avec le papier**.
-
-
 
 
 ## ROS sont plus exprimés dans N que dans D ? (papier dit oui)
@@ -1399,7 +1364,6 @@ ros_terms <- ego_df[
     ignore.case = TRUE
   ),
 ]
-
 
 
 ros_terms <- unique(unlist(strsplit(ros_terms$geneID, "/")))
@@ -1480,6 +1444,7 @@ ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/p
 
 #Le score de stress oxydatif correspond à un score d’expression relative (module score) centré autour de zéro. Ainsi, la comparaison entre conditions est interprétée de manière relative, indépendamment de la valeur absolue du score.
 ```
+
 
 ## Plot
 ```{r}
@@ -1599,9 +1564,9 @@ p_vln_ros <- ggplot(df_ros, aes(x = Condition, y = ROS, fill = Condition)) +
 
 p_vln_ros
 ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/neurons/ROS_score_neurons_N_vs_D_violin.png", plot = p_vln_ros, dpi = 300, width = 5, height = 5)
-
 ```
 La nicotine induit un stress oxydatif dans une sous-population de neurones, sans augmentation globale homogène du ROS dans l’ensemble des neurones.
+
 
 # GOTERM ANALYSIS
 ```{r}
@@ -1640,7 +1605,6 @@ L’exposition à la nicotine induit une activation accrue des voies liées au s
 go_final <- read.csv("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/csv_files_results/neurons/GO_enrichment_neurons_nicotine.csv", sep = ";", header = TRUE)
 colnames(go_final)
 
-
 # Sélectionner les top 12 par Score absolu (tu peux aussi utiliser -log10(FDR) si tu préfères)
 top_go <- go_final %>%
   arrange(desc(abs(Score))) %>%
@@ -1656,7 +1620,6 @@ cols_go <- c(
 # Définir les limites X
 xlim <- max(abs(top_go$Score))
 xmax <- max(top_go$Score, na.rm = TRUE) * 1.05
-
 
 # plot
 p_go <- ggplot(

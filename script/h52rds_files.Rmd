@@ -66,7 +66,7 @@ seu_N <- subset(seu_N, subset = nFeature_RNA > 200 & nFeature_RNA < 6000 & perce
 ```
 
 
-## Fusion + backup 
+## Fusion
 We merge all the filtered objects into one. Each cell keeps its original identifier.
 ```{r}
 seurat_merged <- merge(seu_D, y = seu_N)
@@ -89,7 +89,6 @@ expr <- as.data.frame(t(as.matrix(seurat_merged[["RNA"]]@data)))  # cellules x g
 meta <- seurat_merged@meta.data
 data_full <- cbind(meta, expr)
 
-# Aperçu
 head(data_full[, 1:10])  # 10 premières colonnes
 ```
 
@@ -121,16 +120,17 @@ data_full <- cbind(meta, expr)
 head(data_full[, 1:10])
 
 # Renommer les colonnes pour correspondre à la résolution réelle
-data_complet@meta.data <- data_complet@meta.data %>%
+seurat_merged@meta.data <- seurat_merged@meta.data %>%
   dplyr::rename(Condition = orig.ident)
-Idents(data_complet) <- data_complet$Condition
 
-data_complet@meta.data <- data_complet@meta.data %>%
+seurat_merged@meta.data <- seurat_merged@meta.data %>%
   dplyr::rename(RNA_snn_res.0.3 = RNA_snn_res.0.5)
-Idents(data_complet) <- data_complet$RNA_snn_res.0.3
 
-# Vérification rapide
-head(data_complet@meta.data[, c("orig.ident", "RNA_snn_res.0.3")])
+seurat_merged@meta.data <- seurat_merged@meta.data %>%
+  dplyr::select(-RNA_snn_res.0.3, -seurat_clusters)
+
+# Vérification
+head(seurat_merged@meta.data)
 ```
 
 

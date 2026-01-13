@@ -760,7 +760,7 @@ data_complet$celltype <- cluster_annotation[
 table(data_complet$seurat_clusters, data_complet$celltype)
 
 # save modifications
-# saveRDS(data_complet, "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/rds_files/merged_DN_qc.rds")
+saveRDS(data_complet, "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/rds_files/merged_DN_qc.rds")
 
 # On garde Idents = seurat_clusters
 Idents(data_complet) <- data_complet$seurat_clusters
@@ -908,11 +908,11 @@ mito <- VlnPlot(
   pt.size = 0.2
 ) +
   scale_fill_manual(values = c(
-    "Neural progenitor cells"             = "#1f77b4",
-    "Epithelial progenitor cells"         = "#ff7f0e",
-    "Stromal progenitor cells"            = "#2ca02c",
-    "Undetermined cells (UDCs)"           = "#d62728",
-    "Undifferentiated Stem-like Cells (USCs)" = "#9467bd"
+    "Neural progenitor cells"             = "lightskyblue",
+    "Epithelial progenitor cells"         = "lightpink",
+    "Stromal progenitor cells"            = "olivedrab3",
+    "Undetermined cells (UDCs)"           = "grey",
+    "Undifferentiated Stem-like Cells (USCs)" = "tan1"
   ))+
   ggtitle("Mitochondrial gene percentage per cell type")
 
@@ -940,7 +940,7 @@ VlnPlot(
 ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/nFeature_per_celltype.png", width = 15, height = 10, dpi = 300)
 
 
-# Barplot
+# Barplots
 df <- data_complet@meta.data %>%
   count(celltype) %>%
   mutate(proportion = n / sum(n))
@@ -1009,7 +1009,7 @@ ros <- VlnPlot(
   ggtitle("Expression of ROS-related genes across clusters") +
   theme(plot.title = element_text(hjust = 0.5, face = "bold"))
 ros
-ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/Neural_ROS_genes_ViolinPlot.png", plot=ros, width = 10, height = 12, dpi = 300)
+ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/allcell_ROS_genes_ViolinPlot.png", plot=ros, width = 10, height = 12, dpi = 300)
 
 
 # Expression of ROS-related genes across cell type
@@ -1025,7 +1025,7 @@ p <- VlnPlot(
     axis.text.x = element_text(angle = 45, hjust = 1, size = 8)
   )
 p
-ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/Neural_ROS_genes_ViolinPlot_percelltype.png", plot=p, width = 10, height = 12, dpi=300)
+ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/allcell_ROS_genes_ViolinPlot_percelltype.png", plot=p, width = 10, height = 12, dpi=300)
 
 
 # Expression of ROS-related genes across condition
@@ -1042,7 +1042,7 @@ p_condition <- VlnPlot(
     axis.text.x = element_text(angle = 45, hjust = 1, size = 8)
   )
 p_condition
-  ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/Neural_ROS_genes_ViolinPlot_percondition.png", plot=p_condition, width = 10, height = 12, dpi=300)
+  ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/allcell_ROS_genes_ViolinPlot_percondition.png", plot=p_condition, width = 10, height = 12, dpi=300)
 ```
 
 
@@ -1064,7 +1064,7 @@ ca <- VlnPlot(
   ggtitle("Expression of Ca2+ related genes across clusters") +
   theme(plot.title = element_text(hjust = 0.5, face = "bold"))
 ca
-ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/Neural_Ca_genes_ViolinPlot.png", plot=ca, width = 10, height = 12, dpi = 300)
+ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/allcell_Ca_genes_ViolinPlot.png", plot=ca, width = 10, height = 12, dpi = 300)
 
 
 # Expression of Ca2+-related genes across cell type
@@ -1080,7 +1080,7 @@ pca <- VlnPlot(
     axis.text.x = element_text(angle = 45, hjust = 1, size = 8)
   )
 pca
-ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/Neural_Ca_genes_ViolinPlot_percelltype.png", plot=pca, width = 10, height = 12, dpi=300)
+ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/allcell_Ca_genes_ViolinPlot_percelltype.png", plot=pca, width = 10, height = 12, dpi=300)
 
 
 # Expression of Ca2+ related genes across condition
@@ -1097,7 +1097,7 @@ pca_condition <- VlnPlot(
     axis.text.x = element_text(angle = 45, hjust = 1, size = 8)
   )
 pca_condition
-ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/Neural_Ca_genes_ViolinPlot_percondition.png", plot=pca_condition, width = 10, height = 12, dpi=300)
+ggsave(filename = "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/allcell_Ca_genes_ViolinPlot_percondition.png", plot=pca_condition, width = 10, height = 12, dpi=300)
 ```
 
 
