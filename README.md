@@ -83,6 +83,7 @@ How does nicotine exposure affect:
 ---
 
 ## Resume of the analysis workflow
+```{md}
 Raw snRNA-seq dataset
         │
         ▼
@@ -119,7 +120,7 @@ Biological interpretation
 (Nicotine-driven metabolic reprogramming,
 oxidative stress activation,
 neuronal differentiation bias)
-
+```
 
 ---
 
