@@ -64,6 +64,63 @@ How does nicotine exposure affect:
 - Comparison of pseudotime distributions between N and D
 - Gene expression dynamics along pseudotime (e.g. *SOX11, EPCAM, UBE2C*)
 
+### 5. Functional enrichment
+- Differential expression between N and D within neuronal subtypes
+- Gene Ontology (GO) enrichment analysis
+- Module scoring for:
+  - Reactive oxygen species (ROS)
+  - Stress response pathways
+
+### 6. GSEA analysis
+- Hallmark gene sets from MSigDB
+- Enrichment of:
+  - MYC targets
+  - E2F targets
+  - Oxidative phosphorylation
+  - Hypoxia and stress-related signatures
+
+
+---
+
+## Resume of the analysis workflow
+Raw snRNA-seq dataset
+        │
+        ▼
+Dimensionality reduction (PCA → UMAP / t-SNE)
+        │
+        │  ── Low resolution clustering (res = 0.3–0.4)
+        │
+        ▼
+Broad cell-type identification
+(Epithelial progenitors, Neural progenitors, Stromal cells, UDCs)
+        │
+        │  ── Focus on neural lineage
+        │
+        ▼
+Subset: Neural progenitors & neurons
+        │
+        │  ── Higher resolution clustering (res = 0.6–0.8)
+        │
+        ▼
+Fine-grained neuronal subtypes
+(Differentiating neurons, sensory neuron-like, etc.)
+        │
+        │
+        ├── Differential expression (N vs D)
+        │
+        ├── Functional enrichment (GO, pathways)
+        │
+        ├── Module scores (ROS, stress response)
+        │
+        └── GSEA (MYC, E2F, Oxidative stress, metabolism)
+        │
+        ▼
+Biological interpretation
+(Nicotine-driven metabolic reprogramming,
+oxidative stress activation,
+neuronal differentiation bias)
+
+
 ---
 
 ## Key results

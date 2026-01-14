@@ -760,7 +760,7 @@ data_complet$celltype <- cluster_annotation[
 table(data_complet$seurat_clusters, data_complet$celltype)
 
 # save modifications
-saveRDS(data_complet, "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/rds_files/merged_DN_qc.rds")
+#saveRDS(data_complet, "C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/data/rds_files/merged_DN_qc.rds")
 
 # On garde Idents = seurat_clusters
 Idents(data_complet) <- data_complet$seurat_clusters
@@ -775,11 +775,11 @@ p_annot <- DimPlot(
   pt.size = 1.1
 ) +
   scale_color_manual(values = c(
-    "Neural progenitor cells"             = "lightskyblue",
+    "Neural progenitor cells"             = "tan1",
     "Epithelial progenitor cells"         = "lightpink",
     "Stromal progenitor cells"            = "olivedrab3",
     "Undetermined cells (UDCs)"           = "grey",
-    "Undifferentiated Stem-like Cells (USCs)" = "tan1"
+    "Undifferentiated Stem-like Cells (USCs)" = "lightskyblue"
   )) +
   ggtitle("Annotated tSNE – Cell types")
 p_annot
@@ -802,11 +802,11 @@ p_annotnoleg <- LabelClusters(
   fontface = "bold"
 ) +
   scale_color_manual(values = c(
-    "Neural progenitor cells"                 = "lightskyblue",
+    "Neural progenitor cells"                 = "tan1",
     "Epithelial progenitor cells"             = "lightpink",
     "Stromal progenitor cells"                = "olivedrab3",
     "Undetermined cells (UDCs)"                = "grey",
-    "Undifferentiated Stem-like Cells (USCs)"  = "tan1"
+    "Undifferentiated Stem-like Cells (USCs)"  = "lightskyblue"
   )) +
   ggtitle(NULL) +
   theme(
@@ -908,11 +908,11 @@ mito <- VlnPlot(
   pt.size = 0.2
 ) +
   scale_fill_manual(values = c(
-    "Neural progenitor cells"             = "lightskyblue",
+    "Neural progenitor cells"             = "tan1",
     "Epithelial progenitor cells"         = "lightpink",
     "Stromal progenitor cells"            = "olivedrab3",
     "Undetermined cells (UDCs)"           = "grey",
-    "Undifferentiated Stem-like Cells (USCs)" = "tan1"
+    "Undifferentiated Stem-like Cells (USCs)" = "lightskyblue"
   ))+
   ggtitle("Mitochondrial gene percentage per cell type")
 
@@ -930,11 +930,11 @@ VlnPlot(
   pt.size = 0
 ) +
   scale_fill_manual(values = c(
-    "Neural progenitor cells"                 = "lightskyblue",
+    "Neural progenitor cells"                 = "tan1",
     "Epithelial progenitor cells"             = "lightpink",
     "Stromal progenitor cells"                = "olivedrab3",
     "Undetermined cells (UDCs)"                = "grey",
-    "Undifferentiated Stem-like Cells (USCs)"  = "tan1"
+    "Undifferentiated Stem-like Cells (USCs)"  = "lightskyblue"
   ))+
   ggtitle("nFeature_RNA per cell type")
 ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/plot/allcells/nFeature_per_celltype.png", width = 15, height = 10, dpi = 300)
@@ -949,11 +949,11 @@ ggplot(df, aes(x = "", y = proportion, fill = celltype)) +
   geom_bar(stat = "identity", position = "fill") +
   coord_flip() +
   scale_fill_manual(values = c(
-    "Neural progenitor cells"                  = "lightskyblue",
+    "Neural progenitor cells"                  = "tan1",
     "Epithelial progenitor cells"              = "lightpink",
     "Stromal progenitor cells"                 = "olivedrab3",
     "Undetermined cells (UDCs)"                = "grey",
-    "Undifferentiated Stem-like Cells (USCs)"  = "tan1"
+    "Undifferentiated Stem-like Cells (USCs)"  = "lightskyblue"
   )) +
   ggtitle("Proportion of cells per cell type (normalized)") +
   ylab("Proportion") +
@@ -964,11 +964,11 @@ ggplot(df, aes(x = "", y = proportion, fill = celltype)) +
 ggplot(df, aes(x = celltype, y = proportion, fill = celltype)) +
   geom_bar(stat = "identity") +
   scale_fill_manual(values = c(
-    "Neural progenitor cells"                  = "lightskyblue",
+    "Neural progenitor cells"                  = "tan1",
     "Epithelial progenitor cells"              = "lightpink",
     "Stromal progenitor cells"                 = "olivedrab3",
     "Undetermined cells (UDCs)"                = "grey",
-    "Undifferentiated Stem-like Cells (USCs)"  = "tan1"
+    "Undifferentiated Stem-like Cells (USCs)"  = "lightskyblue"
   )) +
   ggtitle("Proportion of cells per cell type") +
   ylab("Proportion") +
