@@ -124,6 +124,76 @@ ggsave("C:/Users/tomga/Desktop/github/Nicotine_Impact_on_Neurogenesis_snRNAseq/p
 ```
 
 
+## Choisir la première résolution
+```{r}
+# Vérifie qu'on a bien le PCA déjà fait
+if (!"pca" %in% names(data_complet@reductions)) {
+  data_complet <- RunPCA(data_complet, features = VariableFeatures(data_complet))
+}
+
+# Plage de résolutions à tester
+resolutions <- seq(0.3, 1.0, by = 0.1)
+
+# Liste pour stocker les plots
+plots_tsne <- list()
+
+# Boucle principale
+for (res in resolutions) {
+  message("→ Clustering avec résolution = ", res)
+
+  tmp <- FindNeighbors(data_complet, dims = 1:11, verbose = FALSE)
+  tmp <- FindClusters(tmp, resolution = res, verbose = FALSE)
+  tmp <- RunTSNE(tmp, dims = 1:11, verbose = FALSE)
+
+  tsne_df <- as.data.frame(Embeddings(tmp, "tsne"))
+  colnames(tsne_df) <- c("tSNE_1", "tSNE_2")
+  tsne_df$cluster <- Idents(tmp)
+
+  # Nombre de clusters détectés
+  n_clusters <- length(unique(tsne_df$cluster))
+
+  # Si on a plus d’un cluster, on calcule les centroïdes
+  if (n_clusters > 1) {
+    centroids <- tsne_df %>%
+      group_by(cluster) %>%
+      summarise(
+        tSNE_1 = mean(tSNE_1),
+        tSNE_2 = mean(tSNE_2)
+      )
+
+    label_layer <- geom_text_repel(
+      data = centroids,
+      aes(label = cluster),
+      color = "black",
+      size = 4,
+      fontface = "bold",
+      box.padding = 0.5,
+      show.legend = FALSE
+    )
+  } else {
+    label_layer <- NULL
+  }
+
+  # Plot ggplot
+  p <- ggplot(tsne_df, aes(x = tSNE_1, y = tSNE_2, color = cluster)) +
+    geom_point(size = 0.4, alpha = 0.8) +
+    label_layer +
+    ggtitle(paste0("tSNE – Résolution = ", res, " (", n_clusters, " clusters)")) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 12, face = "bold"),
+      legend.position = "none"
+    ) +
+    coord_equal()
+
+  plots_tsne[[as.character(res)]] <- p
+}
+
+# Combine tous les plots
+plot_tsne_res <- wrap_plots(plots_tsne, ncol = 3)
+plot_tsne_res
+```
+
 
 ## Choisir la première résolution
 ```{r}

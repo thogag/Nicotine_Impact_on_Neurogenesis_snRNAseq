@@ -145,7 +145,7 @@ potentially at the cost of proper maturation and cellular homeostasis.
 
 ## Tools & packages
 - **R at 4.5.0**
-  - Seurat (5.4.0)
+  - Seurat (4.3.0)
   - Slingshot (2.18.0)
   - clusterProfiler (4.18.4)
   - msigdbr (25.1.1)
