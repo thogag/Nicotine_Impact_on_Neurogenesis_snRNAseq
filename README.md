@@ -131,6 +131,7 @@ neuronal differentiation bias)
   - shifts in neuronal developmental trajectories
 - Control cells show relative enrichment of stress- and hypoxia-related signatures
 - Pseudotime analysis suggests nicotine may **accelerate neuronal differentiation**
+- [here's](https://github.com/thogag/Nicotine_Impact_on_Neurogenesis_snRNAseq_R/nicotine_impact_on_neurogenesis_poster.pdf) the poster presented to some researchers in order to explain my method and my pipeline
 
 ---
 
